@@ -10,6 +10,7 @@ from typing import Optional, Callable, Dict, Any
 from ultralytics import YOLO
 
 from tracking.bytetrack import ByteTracker
+from lane_detection.road_zone import RoadZoneSelector, RoadZoneOverlay
 
 
 class VideoProcessor:
@@ -70,6 +71,9 @@ class VideoProcessor:
         
         # Tracker sẽ được khởi tạo khi biết fps
         self.tracker: Optional[ByteTracker] = None
+        
+        # Road zone overlay
+        self.road_zone_overlay: Optional[RoadZoneOverlay] = None
         
         # Callback functions
         self._on_frame_callback: Optional[Callable] = None
@@ -134,6 +138,10 @@ class VideoProcessor:
             labels=None
         )
         
+        # Draw road zone overlay if defined
+        if self.road_zone_overlay is not None:
+            annotated_frame = self.road_zone_overlay.draw(annotated_frame)
+        
         # Add labels with tracker IDs
         if self.show_labels and tracked_detections.tracker_id is not None and len(tracked_detections) > 0:
             labels = [
@@ -158,7 +166,8 @@ class VideoProcessor:
         video_path: str,
         output_path: Optional[str] = None,
         display: bool = False,
-        show_progress: bool = True
+        show_progress: bool = True,
+        select_road_zone: bool = True
     ) -> Dict[str, Any]:
         """
         Xử lý video file
@@ -168,6 +177,7 @@ class VideoProcessor:
             output_path: Đường dẫn lưu video output (None = không lưu)
             display: Hiển thị video trong quá trình xử lý
             show_progress: In tiến trình xử lý
+            select_road_zone: Tạm dừng ở frame đầu để chọn vùng đường hợp lệ
             
         Returns:
             Dict với thông tin xử lý (frames_processed, etc.)
@@ -189,6 +199,38 @@ class VideoProcessor:
         if show_progress:
             print(f"Video: {video_path}")
             print(f"Resolution: {width}x{height}, FPS: {fps}, Total frames: {total_frames}")
+        
+        # Select road zone on first frame if enabled
+        first_frame = None
+        if select_road_zone:
+            ret, first_frame = cap.read()
+            if not ret:
+                raise ValueError("Cannot read first frame from video")
+            
+            if show_progress:
+                print("\n=== SELECT ROAD ZONE ===")
+                print("Click to add points, Enter to confirm, Esc to skip")
+            
+            selector = RoadZoneSelector()
+            zone_polygon = selector.select_zone(first_frame)
+            
+            if zone_polygon is not None:
+                self.road_zone_overlay = RoadZoneOverlay(
+                    zone_polygon=zone_polygon,
+                    fill_color=(0, 255, 0),
+                    border_color=(255, 255, 0),
+                    alpha=0.2,
+                    label="Valid Lane"
+                )
+                if show_progress:
+                    print(f"Road zone defined with {len(zone_polygon)} points")
+            else:
+                self.road_zone_overlay = None
+                if show_progress:
+                    print("No road zone defined, skipping...")
+            
+            # Reset video to beginning to process all frames including first
+            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         
         # Video writer
         writer = None

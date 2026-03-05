@@ -36,6 +36,12 @@ def parse_args():
     parser.add_argument("--save-video", action="store_true", help="Save output video")
     parser.add_argument("--display", action="store_true", help="Display video during processing")
     
+    # Road zone options
+    parser.add_argument("--select-zone", action="store_true", default=True, 
+                        help="Pause at first frame to select valid road zone")
+    parser.add_argument("--no-select-zone", dest="select_zone", action="store_false",
+                        help="Skip road zone selection")
+    
     return parser.parse_args()
 
 
@@ -60,7 +66,8 @@ def process_video_source(args):
     processor.process_video(
         video_path=args.input,
         output_path=output_path,
-        display=args.display
+        display=args.display,
+        select_road_zone=args.select_zone
     )
 
 
