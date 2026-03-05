@@ -12,6 +12,18 @@ from ultralytics import YOLO
 
 
 class ByteTracker:
+    """
+    ByteTrack tracker wrapper sử dụng Supervision
+    Tham số:
+        track_activation_threshold: Ngưỡng confidence để kích hoạt track mới
+        lost_track_buffer: Số frames tối đa để giữ track khi không có detections
+        minimum_matching_threshold: Ngưỡng IoU để matching detections với tracks
+        frame_rate: Frame rate của video (để tính toán thời gian mất track)
+        box_viz: Hiển thị bounding boxes   
+        label_viz: Hiển thị labels
+        trace_viz: Hiển thị đường đi của objects
+        trace_length: Độ dài trace (số frames)
+    """
     def __init__(self, track_activation_threshold=0.3,
             lost_track_buffer=30,
             minimum_matching_threshold=0.8,
@@ -37,21 +49,25 @@ class ByteTracker:
             frame_rate=self.frame_rate
         )
 
+        self.box_annotator = None
+        self.label_annotator = None
+        self.trace_annotator = None
+
         if box_viz:
-            box_annotator = sv.BoxAnnotator(
+            self.box_annotator = sv.BoxAnnotator(
                 thickness=2,
                 color=sv.ColorPalette.from_hex(['#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF'])
             )
         
         if label_viz:
-            label_annotator = sv.LabelAnnotator(
+            self.label_annotator = sv.LabelAnnotator(
                 text_scale=0.5,
                 text_thickness=1,
                 text_padding=5
             )
         
         if trace_viz:
-            trace_annotator = sv.TraceAnnotator(
+            self.trace_annotator = sv.TraceAnnotator(
                 thickness=2,
                 trace_length=trace_length,
                 color=sv.ColorPalette.from_hex(['#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF'])
@@ -84,19 +100,19 @@ class ByteTracker:
         annotated_scene = scene.copy()
         updated_detections = self.update(detections)
         
-        if self.trace_viz:
+        if self.trace_viz and self.trace_annotator:
             annotated_scene = self.trace_annotator.annotate(
                 scene=annotated_scene,
                 detections=updated_detections
             )
         
-        if self.box_viz:
+        if self.box_viz and self.box_annotator:
             annotated_scene = self.box_annotator.annotate(
                 scene=annotated_scene,
                 detections=updated_detections
             )
         
-        if self.label_viz and labels is not None:
+        if self.label_viz and self.label_annotator and labels is not None:
             annotated_scene = self.label_annotator.annotate(
                 scene=annotated_scene,
                 detections=updated_detections,
