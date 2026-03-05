@@ -1,18 +1,107 @@
-from tracking.bytetrack import ByteTracker
-from ultralytics import YOLO
+from process.video import VideoProcessor
 
 
-def argparse():
+def parse_args():
     import argparse
 
-    parser = argparse.ArgumentParser(description="Object Tracking with YOLO and ByteTrack", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description="Object Tracking with YOLO and ByteTrack",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    
+    # Input source options
+    parser.add_argument("--source", type=str, default="video", choices=["video", "webcam", "rtsp", "images"],
+                        help="Input source type")
+    parser.add_argument("--input", type=str, default="input.mp4", help="Path to input (video file, rtsp url, or image folder)")
+    parser.add_argument("--output", type=str, default="output.mp4", help="Path to save the output")
+    
+    # Model options
     parser.add_argument("--model", type=str, default="yolov8n.pt", help="Path to the YOLO model")
-    parser.add_argument("--video", type=str, default="input.mp4", help="Path to the input video")
-    parser.add_argument("--output", type=str, default="output.mp4", help="Path to save the output video")
-    args = parser.parse_args()
-    return args
+    parser.add_argument("--device", type=str, default="cpu", help="Device to run the model on ('cpu' or 'cuda')")
+    parser.add_argument("--img-size", type=int, default=640, help="Input image size for the model")
+    
+    # Tracker options
+    parser.add_argument("--conf-thres", type=float, default=0.25, help="Confidence threshold for detections")
+    parser.add_argument("--iou-thres", type=float, default=0.5, help="IoU threshold for tracking")
+    parser.add_argument("--max-age", type=int, default=90, help="Maximum frames to keep track without detections")
+    parser.add_argument("--classes", nargs="+", type=int, default=None, help="Class IDs to track (e.g., 2 5 7)")
+    
+    # Visualization options
+    parser.add_argument("--show-boxes", action="store_true", default=True, help="Show bounding boxes")
+    parser.add_argument("--show-labels", action="store_true", default=True, help="Show labels")
+    parser.add_argument("--show-traces", action="store_true", default=True, help="Show tracking traces")
+    parser.add_argument("--trace-length", type=int, default=50, help="Length of tracking traces")
+    
+    # Output options
+    parser.add_argument("--save-video", action="store_true", help="Save output video")
+    parser.add_argument("--display", action="store_true", help="Display video during processing")
+    
+    return parser.parse_args()
+
+
+def process_video_source(args):
+    """Xử lý video file"""
+    processor = VideoProcessor(
+        model_path=args.model,
+        device=args.device,
+        conf_threshold=args.conf_thres,
+        iou_threshold=args.iou_thres,
+        max_age=args.max_age,
+        img_size=args.img_size,
+        classes=args.classes,
+        show_boxes=args.show_boxes,
+        show_labels=args.show_labels,
+        show_traces=args.show_traces,
+        trace_length=args.trace_length
+    )
+    
+    output_path = args.output if args.save_video else None
+    
+    processor.process_video(
+        video_path=args.input,
+        output_path=output_path,
+        display=args.display
+    )
+
+
+def process_webcam_source(args):
+    """Xử lý webcam (TODO: implement)"""
+    print("Webcam processing not implemented yet")
+    # TODO: Implement webcam processing
+    pass
+
+
+def process_rtsp_source(args):
+    """Xử lý RTSP stream (TODO: implement)"""
+    print("RTSP processing not implemented yet")
+    # TODO: Implement RTSP streaming
+    pass
+
+
+def process_images_source(args):
+    """Xử lý folder ảnh (TODO: implement)"""
+    print("Images processing not implemented yet")
+    # TODO: Implement image folder processing
+    pass
 
 
 def main():
-    args = argparse()
-    pass
+    args = parse_args()
+    
+    # Route to appropriate processor based on source type
+    source_handlers = {
+        "video": process_video_source,
+        "webcam": process_webcam_source,
+        "rtsp": process_rtsp_source,
+        "images": process_images_source
+    }
+    
+    handler = source_handlers.get(args.source)
+    if handler:
+        handler(args)
+    else:
+        print(f"Unknown source type: {args.source}")
+
+
+if __name__ == "__main__":
+    main()
