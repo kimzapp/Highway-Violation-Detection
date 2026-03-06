@@ -8,6 +8,232 @@ import numpy as np
 from typing import List, Tuple, Optional
 
 
+class LaneLineSuggestion:
+    """
+    Phát hiện và gợi ý vạch kẻ đường để hỗ trợ người dùng chọn vùng
+    """
+    
+    def __init__(self, canny_low: int = 50, canny_high: int = 150,
+                 hough_threshold: int = 50, min_line_length: int = 50,
+                 max_line_gap: int = 30, suggestion_distance: int = 30):
+        """
+        Khởi tạo LaneLineSuggestion
+        
+        Args:
+            canny_low: Ngưỡng thấp cho Canny edge detection
+            canny_high: Ngưỡng cao cho Canny edge detection
+            hough_threshold: Ngưỡng cho Hough Line Transform
+            min_line_length: Độ dài tối thiểu của line
+            max_line_gap: Khoảng cách tối đa giữa các điểm trên line
+            suggestion_distance: Khoảng cách để kích hoạt gợi ý (pixels)
+        """
+        self.canny_low = canny_low
+        self.canny_high = canny_high
+        self.hough_threshold = hough_threshold
+        self.min_line_length = min_line_length
+        self.max_line_gap = max_line_gap
+        self.suggestion_distance = suggestion_distance
+        
+        self.detected_lines: List[np.ndarray] = []
+        self.edge_points: List[np.ndarray] = []  # Contour points từ edges
+        
+    def detect_lanes(self, frame: np.ndarray) -> None:
+        """
+        Phát hiện vạch kẻ đường trong frame
+        
+        Args:
+            frame: Frame BGR để phân tích
+        """
+        # Convert to grayscale
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
+        # Apply Gaussian blur
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        
+        # Edge detection
+        edges = cv2.Canny(blurred, self.canny_low, self.canny_high)
+        
+        # Lưu edge points để gợi ý theo contour
+        contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        self.edge_points = []
+        for contour in contours:
+            if cv2.arcLength(contour, False) > self.min_line_length:
+                self.edge_points.append(contour.reshape(-1, 2))
+        
+        # Detect lines using Hough Transform
+        lines = cv2.HoughLinesP(edges, 1, np.pi/180, self.hough_threshold,
+                                minLineLength=self.min_line_length,
+                                maxLineGap=self.max_line_gap)
+        
+        self.detected_lines = []
+        if lines is not None:
+            for line in lines:
+                self.detected_lines.append(line[0])  # [x1, y1, x2, y2]
+    
+    def find_nearest_edge_point(self, point: Tuple[int, int]) -> Optional[Tuple[int, int]]:
+        """
+        Tìm điểm edge gần nhất với vị trí chuột
+        
+        Args:
+            point: Tọa độ chuột (x, y)
+            
+        Returns:
+            Điểm edge gần nhất hoặc None
+        """
+        if not self.edge_points:
+            return None
+        
+        min_dist = float('inf')
+        nearest_point = None
+        
+        for contour_points in self.edge_points:
+            for edge_pt in contour_points:
+                dist = np.sqrt((edge_pt[0] - point[0])**2 + (edge_pt[1] - point[1])**2)
+                if dist < min_dist and dist < self.suggestion_distance:
+                    min_dist = dist
+                    nearest_point = (int(edge_pt[0]), int(edge_pt[1]))
+        
+        return nearest_point
+    
+    def get_suggestion_path(self, point: Tuple[int, int], 
+                           direction: str = "forward",
+                           num_points: int = 20) -> List[Tuple[int, int]]:
+        """
+        Lấy đường gợi ý dọc theo vạch kẻ đường từ một điểm
+        
+        Args:
+            point: Điểm bắt đầu (x, y)
+            direction: Hướng tìm ("forward" hoặc "backward" theo y)
+            num_points: Số điểm gợi ý
+            
+        Returns:
+            Danh sách các điểm gợi ý
+        """
+        suggestion = []
+        
+        # Tìm contour chứa hoặc gần điểm nhất
+        best_contour = None
+        best_idx = -1
+        min_dist = float('inf')
+        
+        for contour_points in self.edge_points:
+            for idx, edge_pt in enumerate(contour_points):
+                dist = np.sqrt((edge_pt[0] - point[0])**2 + (edge_pt[1] - point[1])**2)
+                if dist < min_dist:
+                    min_dist = dist
+                    best_contour = contour_points
+                    best_idx = idx
+        
+        if best_contour is None or min_dist > self.suggestion_distance:
+            return suggestion
+        
+        # Lấy các điểm dọc theo contour
+        if direction == "forward":
+            # Đi theo hướng tăng index (thường là xuống dưới)
+            end_idx = min(best_idx + num_points, len(best_contour))
+            for i in range(best_idx, end_idx):
+                suggestion.append((int(best_contour[i][0]), int(best_contour[i][1])))
+        else:
+            # Đi theo hướng giảm index (thường là lên trên)
+            start_idx = max(best_idx - num_points, 0)
+            for i in range(best_idx, start_idx, -1):
+                suggestion.append((int(best_contour[i][0]), int(best_contour[i][1])))
+        
+        return suggestion
+    
+    def get_extended_suggestion(self, last_point: Tuple[int, int], 
+                                current_point: Tuple[int, int],
+                                num_points: int = 30) -> List[Tuple[int, int]]:
+        """
+        Lấy gợi ý mở rộng dựa trên hướng đang vẽ
+        
+        Args:
+            last_point: Điểm trước đó đã chọn
+            current_point: Vị trí chuột hiện tại
+            num_points: Số điểm gợi ý
+            
+        Returns:
+            Danh sách điểm gợi ý theo hướng đang vẽ
+        """
+        # Xác định hướng dựa trên vector từ last_point đến current_point
+        dx = current_point[0] - last_point[0]
+        dy = current_point[1] - last_point[1]
+        
+        suggestion = []
+        
+        # Tìm contour gần current_point nhất
+        best_contour = None
+        best_idx = -1
+        min_dist = float('inf')
+        
+        for contour_points in self.edge_points:
+            for idx, edge_pt in enumerate(contour_points):
+                dist = np.sqrt((edge_pt[0] - current_point[0])**2 + 
+                             (edge_pt[1] - current_point[1])**2)
+                if dist < min_dist:
+                    min_dist = dist
+                    best_contour = contour_points
+                    best_idx = idx
+        
+        if best_contour is None or min_dist > self.suggestion_distance * 2:
+            return suggestion
+        
+        # Tìm hướng đi trên contour phù hợp với hướng vẽ
+        # Thử cả 2 hướng và chọn hướng có vector tương tự
+        forward_pts = []
+        backward_pts = []
+        
+        # Forward direction
+        for i in range(best_idx, min(best_idx + num_points, len(best_contour))):
+            forward_pts.append((int(best_contour[i][0]), int(best_contour[i][1])))
+        
+        # Backward direction
+        for i in range(best_idx, max(best_idx - num_points, -1), -1):
+            backward_pts.append((int(best_contour[i][0]), int(best_contour[i][1])))
+        
+        # Chọn hướng có vector tương tự với hướng vẽ
+        if len(forward_pts) >= 2:
+            fwd_dx = forward_pts[-1][0] - forward_pts[0][0]
+            fwd_dy = forward_pts[-1][1] - forward_pts[0][1]
+            fwd_dot = dx * fwd_dx + dy * fwd_dy
+        else:
+            fwd_dot = -float('inf')
+        
+        if len(backward_pts) >= 2:
+            bwd_dx = backward_pts[-1][0] - backward_pts[0][0]
+            bwd_dy = backward_pts[-1][1] - backward_pts[0][1]
+            bwd_dot = dx * bwd_dx + dy * bwd_dy
+        else:
+            bwd_dot = -float('inf')
+        
+        if fwd_dot > bwd_dot:
+            suggestion = forward_pts
+        else:
+            suggestion = backward_pts
+        
+        return suggestion
+
+    def draw_detected_lanes(self, frame: np.ndarray, 
+                           color: Tuple[int, int, int] = (100, 100, 100),
+                           thickness: int = 1) -> np.ndarray:
+        """
+        Vẽ các vạch kẻ đường đã phát hiện (dùng để debug)
+        
+        Args:
+            frame: Frame để vẽ
+            color: Màu vẽ
+            thickness: Độ dày
+            
+        Returns:
+            Frame đã vẽ
+        """
+        result = frame.copy()
+        for line in self.detected_lines:
+            x1, y1, x2, y2 = line
+            cv2.line(result, (x1, y1), (x2, y2), color, thickness)
+        return result
+
+
 class RoadZoneSelector:
     """
     Công cụ chọn vùng đường hợp lệ bằng cách click chuột để tạo polygon
@@ -15,8 +241,11 @@ class RoadZoneSelector:
     Hướng dẫn sử dụng:
     - Click chuột trái: Thêm điểm vào polygon
     - Click chuột phải: Xóa điểm cuối cùng
+    - Di chuột gần vạch kẻ đường: Hiển thị gợi ý
+    - Nhấn 'S': Thêm điểm gợi ý vào polygon
     - Nhấn 'Enter': Xác nhận polygon và tiếp tục
     - Nhấn 'r': Reset tất cả điểm
+    - Nhấn 'L': Bật/tắt hiển thị lane detection
     - Nhấn 'Esc': Hủy và thoát
     """
     
@@ -25,7 +254,9 @@ class RoadZoneSelector:
     def __init__(self, zone_color: Tuple[int, int, int] = (0, 255, 0), 
                  zone_alpha: float = 0.3,
                  point_color: Tuple[int, int, int] = (0, 0, 255),
-                 line_color: Tuple[int, int, int] = (255, 255, 0)):
+                 line_color: Tuple[int, int, int] = (255, 255, 0),
+                 suggestion_color: Tuple[int, int, int] = (255, 0, 255),
+                 enable_suggestion: bool = True):
         """
         Khởi tạo RoadZoneSelector
         
@@ -34,73 +265,368 @@ class RoadZoneSelector:
             zone_alpha: Độ trong suốt của vùng (0-1)
             point_color: Màu các điểm đã chọn
             line_color: Màu đường nối các điểm
+            suggestion_color: Màu đường gợi ý (BGR)
+            enable_suggestion: Bật/tắt tính năng gợi ý
         """
         self.zone_color = zone_color
         self.zone_alpha = zone_alpha
         self.point_color = point_color
         self.line_color = line_color
+        self.suggestion_color = suggestion_color
+        self.enable_suggestion = enable_suggestion
         
         self.points: List[Tuple[int, int]] = []
         self._current_frame: Optional[np.ndarray] = None
         self._selection_done = False
         self._cancelled = False
+        
+        # Lane suggestion
+        self._lane_suggester: Optional[LaneLineSuggestion] = None
+        self._current_mouse_pos: Tuple[int, int] = (0, 0)
+        self._current_suggestion: List[Tuple[int, int]] = []
+        self._show_lane_detection = False  # Hiển thị debug lane detection
     
     def _mouse_callback(self, event, x, y, flags, param):
         """Callback xử lý sự kiện chuột"""
         if event == cv2.EVENT_LBUTTONDOWN:
             # Click trái - thêm điểm
             self.points.append((x, y))
+            self._update_suggestion((x, y))
             self._draw_preview()
         elif event == cv2.EVENT_RBUTTONDOWN:
             # Click phải - xóa điểm cuối
             if self.points:
                 self.points.pop()
                 self._draw_preview()
+        elif event == cv2.EVENT_MOUSEMOVE:
+            # Di chuột - cập nhật gợi ý
+            self._current_mouse_pos = (x, y)
+            if self.enable_suggestion:
+                self._update_suggestion((x, y))
+            self._draw_preview()
+    
+    def _update_suggestion(self, mouse_pos: Tuple[int, int]):
+        """Cập nhật đường gợi ý dựa trên vị trí chuột"""
+        if not self.enable_suggestion or self._lane_suggester is None:
+            self._current_suggestion = []
+            return
+        
+        if len(self.points) >= 1:
+            # Có điểm trước đó - gợi ý theo hướng đang vẽ
+            last_point = self.points[-1]
+            self._current_suggestion = self._lane_suggester.get_extended_suggestion(
+                last_point, mouse_pos, num_points=40
+            )
+        else:
+            # Chưa có điểm - gợi ý điểm gần nhất
+            nearest = self._lane_suggester.find_nearest_edge_point(mouse_pos)
+            if nearest:
+                self._current_suggestion = [nearest]
+            else:
+                self._current_suggestion = []
+    
+    def _add_suggestion_points(self):
+        """Thêm các điểm gợi ý vào polygon"""
+        if self._current_suggestion:
+            # Lọc các điểm để tránh trùng lặp và quá gần nhau
+            min_distance = 15  # Khoảng cách tối thiểu giữa các điểm
+            for pt in self._current_suggestion:
+                if not self.points:
+                    self.points.append(pt)
+                else:
+                    last_pt = self.points[-1]
+                    dist = np.sqrt((pt[0] - last_pt[0])**2 + (pt[1] - last_pt[1])**2)
+                    if dist >= min_distance:
+                        self.points.append(pt)
+            self._current_suggestion = []
+            self._draw_preview()
+    
+    def _get_ui_scale(self, frame_width: int, frame_height: int) -> dict:
+        """Tính toán scale cho UI dựa trên kích thước frame"""
+        # Base resolution: 1280x720
+        base_w, base_h = 1280, 720
+        scale_w = frame_width / base_w
+        scale_h = frame_height / base_h
+        scale = min(scale_w, scale_h)  # Dùng scale nhỏ hơn để không bị tràn
+        scale = max(0.5, min(scale, 2.0))  # Giới hạn scale từ 0.5 đến 2.0
+        
+        return {
+            'scale': scale,
+            'font_scale': scale * 0.5,
+            'font_scale_header': scale * 0.55,
+            'font_scale_small': scale * 0.4,
+            'thickness': max(1, int(scale)),
+            'panel_width': int(200 * scale),
+            'panel_padding': int(12 * scale),
+            'line_height': int(26 * scale),
+            'point_radius': max(4, int(7 * scale)),
+            'cross_size': max(10, int(14 * scale)),
+            'radius': max(6, int(10 * scale)),
+        }
+    
+    def _draw_rounded_rect(self, img: np.ndarray, pt1: Tuple[int, int], pt2: Tuple[int, int],
+                           color: Tuple[int, int, int], radius: int = 10, 
+                           thickness: int = -1, alpha: float = 1.0) -> np.ndarray:
+        """Vẽ hình chữ nhật bo góc với độ trong suốt"""
+        overlay = img.copy()
+        x1, y1 = pt1
+        x2, y2 = pt2
+        
+        # Ensure radius doesn't exceed half of width or height
+        radius = min(radius, (x2 - x1) // 2, (y2 - y1) // 2)
+        
+        # Vẽ các phần của rounded rectangle
+        cv2.rectangle(overlay, (x1 + radius, y1), (x2 - radius, y2), color, thickness)
+        cv2.rectangle(overlay, (x1, y1 + radius), (x2, y2 - radius), color, thickness)
+        
+        # Vẽ các góc bo tròn với LINE_AA
+        cv2.ellipse(overlay, (x1 + radius, y1 + radius), (radius, radius), 180, 0, 90, color, thickness, cv2.LINE_AA)
+        cv2.ellipse(overlay, (x2 - radius, y1 + radius), (radius, radius), 270, 0, 90, color, thickness, cv2.LINE_AA)
+        cv2.ellipse(overlay, (x1 + radius, y2 - radius), (radius, radius), 90, 0, 90, color, thickness, cv2.LINE_AA)
+        cv2.ellipse(overlay, (x2 - radius, y2 - radius), (radius, radius), 0, 0, 90, color, thickness, cv2.LINE_AA)
+        
+        return cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0)
+    
+    def _draw_panel(self, img: np.ndarray, x: int, y: int, width: int, height: int,
+                    bg_color: Tuple[int, int, int] = (20, 20, 25), 
+                    alpha: float = 0.88, radius: int = 8) -> np.ndarray:
+        """Vẽ panel với background mờ và viền nhẹ"""
+        result = self._draw_rounded_rect(img, (x, y), (x + width, y + height), 
+                                         bg_color, radius=radius, alpha=alpha)
+        # Thêm border nhẹ
+        result = self._draw_rounded_rect(result, (x, y), (x + width, y + height), 
+                                         (60, 60, 65), radius=radius, thickness=1, alpha=0.5)
+        return result
     
     def _draw_preview(self):
-        """Vẽ preview polygon lên frame"""
+        """Vẽ preview polygon lên frame với giao diện hiện đại"""
         if self._current_frame is None:
             return
         
+        h, w = self._current_frame.shape[:2]
         preview = self._current_frame.copy()
         
-        # Vẽ polygon fill nếu có >= 3 điểm
+        # Tính UI scale
+        ui = self._get_ui_scale(w, h)
+        scale = ui['scale']
+        
+        # Font settings
+        FONT = cv2.FONT_HERSHEY_DUPLEX  # Font hiện đại hơn
+        FONT_LIGHT = cv2.FONT_HERSHEY_SIMPLEX
+        
+        # Vẽ lane detection debug nếu bật
+        if self._show_lane_detection and self._lane_suggester:
+            preview = self._lane_suggester.draw_detected_lanes(preview, 
+                                                               color=(80, 80, 90), 
+                                                               thickness=1)
+        
+        # ===== VẼ ĐƯỜNG GỢI Ý =====
+        if self._current_suggestion and len(self._current_suggestion) >= 2:
+            suggestion_pts = np.array(self._current_suggestion, dtype=np.int32)
+            # Glow effect mềm mại
+            cv2.polylines(preview, [suggestion_pts], isClosed=False, 
+                         color=(180, 80, 220), thickness=max(4, int(5*scale)), lineType=cv2.LINE_AA)
+            cv2.polylines(preview, [suggestion_pts], isClosed=False, 
+                         color=self.suggestion_color, thickness=max(2, int(2*scale)), lineType=cv2.LINE_AA)
+            
+            # Điểm gợi ý nhỏ
+            for i, pt in enumerate(self._current_suggestion[::4]):
+                cv2.circle(preview, pt, max(2, int(3*scale)), (255, 255, 255), -1, cv2.LINE_AA)
+                
+        elif self._current_suggestion and len(self._current_suggestion) == 1:
+            pt = self._current_suggestion[0]
+            r = ui['point_radius']
+            cv2.circle(preview, pt, r + 6, self.suggestion_color, 1, cv2.LINE_AA)
+            cv2.circle(preview, pt, r + 3, self.suggestion_color, 1, cv2.LINE_AA)
+            cv2.circle(preview, pt, r, self.suggestion_color, -1, cv2.LINE_AA)
+        
+        # ===== VẼ PREVIEW LINE TỪ ĐIỂM CUỐI ĐẾN CHUỘT =====
+        if self.points and self._current_mouse_pos:
+            x1, y1 = self.points[-1]
+            x2, y2 = self._current_mouse_pos
+            dist = np.sqrt((x2-x1)**2 + (y2-y1)**2)
+            if dist > 0:
+                # Vẽ đường nét đứt mượt mà
+                dash_len = max(8, int(10 * scale))
+                gap_len = max(6, int(8 * scale))
+                dx, dy = (x2-x1)/dist, (y2-y1)/dist
+                i = 0
+                while i < dist:
+                    start = (int(x1 + dx * i), int(y1 + dy * i))
+                    end_i = min(i + dash_len, dist)
+                    end = (int(x1 + dx * end_i), int(y1 + dy * end_i))
+                    cv2.line(preview, start, end, (160, 160, 170), max(1, int(1.5*scale)), cv2.LINE_AA)
+                    i += dash_len + gap_len
+        
+        # ===== VẼ POLYGON FILL =====
         if len(self.points) >= 3:
             overlay = preview.copy()
             pts = np.array(self.points, dtype=np.int32)
-            cv2.fillPoly(overlay, [pts], self.zone_color)
+            cv2.fillPoly(overlay, [pts], self.zone_color, cv2.LINE_AA)
             preview = cv2.addWeighted(overlay, self.zone_alpha, preview, 1 - self.zone_alpha, 0)
         
-        # Vẽ đường nối các điểm
+        # ===== VẼ ĐƯỜNG VIỀN POLYGON =====
         if len(self.points) >= 2:
             pts = np.array(self.points, dtype=np.int32)
-            cv2.polylines(preview, [pts], isClosed=True, color=self.line_color, thickness=2)
+            # Subtle glow
+            cv2.polylines(preview, [pts], isClosed=True, color=(80, 180, 80), 
+                         thickness=max(3, int(4*scale)), lineType=cv2.LINE_AA)
+            cv2.polylines(preview, [pts], isClosed=True, color=self.line_color, 
+                         thickness=max(1, int(2*scale)), lineType=cv2.LINE_AA)
         
-        # Vẽ các điểm
+        # ===== VẼ CÁC ĐIỂM ĐÃ CHỌN =====
+        r = ui['point_radius']
         for i, pt in enumerate(self.points):
-            cv2.circle(preview, pt, 6, self.point_color, -1)
-            cv2.circle(preview, pt, 8, self.line_color, 2)
-            # Số thứ tự điểm
-            cv2.putText(preview, str(i + 1), (pt[0] + 10, pt[1] - 10),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            # Outer ring
+            cv2.circle(preview, pt, r + 4, (70, 70, 75), 1, cv2.LINE_AA)
+            # Main circle with gradient effect
+            cv2.circle(preview, pt, r + 1, self.line_color, -1, cv2.LINE_AA)
+            cv2.circle(preview, pt, r + 1, (255, 255, 255), 1, cv2.LINE_AA)
+            # Inner highlight
+            cv2.circle(preview, pt, max(2, r - 2), self.point_color, -1, cv2.LINE_AA)
+            
+            # Label với style mới
+            label = str(i + 1)
+            font_s = ui['font_scale_small']
+            (tw, th), baseline = cv2.getTextSize(label, FONT, font_s, 1)
+            lx, ly = pt[0] + r + 6, pt[1] - r - 2
+            # Background pill
+            cv2.rectangle(preview, (lx - 3, ly - th - 3), (lx + tw + 3, ly + 3), (30, 30, 35), -1)
+            cv2.rectangle(preview, (lx - 3, ly - th - 3), (lx + tw + 3, ly + 3), (80, 80, 85), 1)
+            cv2.putText(preview, label, (lx, ly), FONT, font_s, (230, 230, 235), 1, cv2.LINE_AA)
         
-        # Hướng dẫn
+        # ===== VẼ CROSSHAIR =====
+        if self._current_mouse_pos:
+            mx, my = self._current_mouse_pos
+            cs = ui['cross_size']
+            gap = max(4, int(5 * scale))
+            # Crosshair mỏng, tinh tế
+            cross_color = (180, 180, 185)
+            cv2.line(preview, (mx - cs, my), (mx - gap, my), cross_color, 1, cv2.LINE_AA)
+            cv2.line(preview, (mx + gap, my), (mx + cs, my), cross_color, 1, cv2.LINE_AA)
+            cv2.line(preview, (mx, my - cs), (mx, my - gap), cross_color, 1, cv2.LINE_AA)
+            cv2.line(preview, (mx, my + gap), (mx, my + cs), cross_color, 1, cv2.LINE_AA)
+        
+        # ===== PANEL HƯỚNG DẪN =====
+        panel_w = ui['panel_width']
+        panel_pad = ui['panel_padding']
+        line_h = ui['line_height']
+        panel_x, panel_y = int(12 * scale), int(12 * scale)
+        
+        # Tính chiều cao panel
+        num_items = 7
+        panel_h = int(panel_pad * 2 + line_h * num_items + 70 * scale)
+        
+        preview = self._draw_panel(preview, panel_x, panel_y, panel_w, panel_h, 
+                                   radius=ui['radius'])
+        
+        # Header
+        header_y = panel_y + int(24 * scale)
+        cv2.putText(preview, "ZONE SELECTOR", (panel_x + panel_pad, header_y),
+                   FONT, ui['font_scale_header'], (140, 200, 255), 1, cv2.LINE_AA)
+        # Divider line
+        div_y = header_y + int(10 * scale)
+        cv2.line(preview, (panel_x + panel_pad, div_y), 
+                (panel_x + panel_w - panel_pad, div_y), (55, 55, 60), 1, cv2.LINE_AA)
+        
+        # Instructions
         instructions = [
-            "Left click: Add point",
-            "Right click: Remove last point",
-            "Enter: Confirm",
-            "R: Reset",
-            "Esc: Cancel"
+            ("L-Click", "Add point", (130, 230, 130)),
+            ("R-Click", "Undo", (130, 160, 230)),
+            ("S", "Add path", (230, 130, 230)),
+            ("L", "Show lanes", (230, 200, 130)),
+            ("Enter", "Confirm", (130, 230, 130)),
+            ("R", "Reset", (230, 170, 130)),
+            ("Esc", "Cancel", (160, 160, 165)),
         ]
-        y_offset = 30
-        for text in instructions:
-            cv2.putText(preview, text, (10, y_offset),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            y_offset += 25
         
-        # Số điểm đã chọn
-        cv2.putText(preview, f"Points: {len(self.points)}", (10, y_offset + 10),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        y_pos = div_y + int(22 * scale)
+        key_box_w = int(52 * scale)
+        
+        for key, desc, color in instructions:
+            # Key badge
+            (key_tw, _), _ = cv2.getTextSize(key, FONT_LIGHT, ui['font_scale_small'], 1)
+            kx = panel_x + panel_pad
+            cv2.rectangle(preview, (kx, y_pos - int(14*scale)), 
+                         (kx + key_box_w, y_pos + int(4*scale)), (45, 45, 50), -1)
+            cv2.rectangle(preview, (kx, y_pos - int(14*scale)), 
+                         (kx + key_box_w, y_pos + int(4*scale)), (75, 75, 80), 1)
+            # Center key text
+            key_x = kx + (key_box_w - key_tw) // 2
+            cv2.putText(preview, key, (key_x, y_pos),
+                       FONT_LIGHT, ui['font_scale_small'], (210, 210, 215), 1, cv2.LINE_AA)
+            # Description
+            cv2.putText(preview, desc, (kx + key_box_w + int(8*scale), y_pos),
+                       FONT_LIGHT, ui['font_scale_small'], color, 1, cv2.LINE_AA)
+            y_pos += line_h
+        
+        # ===== STATUS BAR PHÍA DƯỚI PANEL =====
+        status_y = y_pos + int(8 * scale)
+        cv2.line(preview, (panel_x + panel_pad, status_y - int(5*scale)), 
+                (panel_x + panel_w - panel_pad, status_y - int(5*scale)), (55, 55, 60), 1, cv2.LINE_AA)
+        
+        # Points indicator
+        pts_count = len(self.points)
+        pts_color = (130, 230, 130) if pts_count >= 3 else (230, 200, 130)
+        cv2.putText(preview, f"{pts_count}", (panel_x + panel_pad, status_y + int(12*scale)),
+                   FONT, ui['font_scale'], pts_color, 1, cv2.LINE_AA)
+        cv2.putText(preview, "pts", (panel_x + panel_pad + int(20*scale), status_y + int(12*scale)),
+                   FONT_LIGHT, ui['font_scale_small'], (140, 140, 145), 1, cv2.LINE_AA)
+        
+        # Mini progress dots
+        dot_x = panel_x + int(60 * scale)
+        for i in range(3):
+            dot_color = pts_color if i < pts_count else (60, 60, 65)
+            cv2.circle(preview, (dot_x + i * int(12*scale), status_y + int(8*scale)), 
+                      max(2, int(3*scale)), dot_color, -1, cv2.LINE_AA)
+        
+        # Suggestion indicator
+        if self.enable_suggestion:
+            ind_color = (130, 230, 130)
+            ind_text = "AI"
+        else:
+            ind_color = (100, 100, 105)
+            ind_text = "--"
+        cv2.putText(preview, ind_text, (panel_x + panel_w - panel_pad - int(22*scale), status_y + int(12*scale)),
+                   FONT_LIGHT, ui['font_scale_small'], ind_color, 1, cv2.LINE_AA)
+        
+        # ===== SUGGESTION TOAST =====
+        if self._current_suggestion and len(self._current_suggestion) >= 2:
+            msg = f"Press S to add {len(self._current_suggestion)} points"
+            (tw, th), _ = cv2.getTextSize(msg, FONT, ui['font_scale'], 1)
+            toast_w = tw + int(30 * scale)
+            toast_h = th + int(16 * scale)
+            toast_x = (w - toast_w) // 2
+            toast_y = int(15 * scale)
+            
+            preview = self._draw_panel(preview, toast_x, toast_y, toast_w, toast_h,
+                                       bg_color=(70, 35, 90), alpha=0.92, radius=ui['radius'])
+            cv2.putText(preview, msg, (toast_x + int(15*scale), toast_y + th + int(5*scale)),
+                       FONT, ui['font_scale'], (240, 200, 255), 1, cv2.LINE_AA)
+        
+        # ===== COORDINATES =====
+        if self._current_mouse_pos:
+            coord_text = f"{self._current_mouse_pos[0]}, {self._current_mouse_pos[1]}"
+            (tw, th), _ = cv2.getTextSize(coord_text, FONT_LIGHT, ui['font_scale_small'], 1)
+            cx = w - tw - int(20 * scale)
+            cy = h - int(15 * scale)
+            preview = self._draw_panel(preview, cx - int(8*scale), cy - th - int(6*scale), 
+                                       tw + int(16*scale), th + int(12*scale),
+                                       bg_color=(30, 30, 35), alpha=0.75, radius=max(4, int(6*scale)))
+            cv2.putText(preview, coord_text, (cx, cy),
+                       FONT_LIGHT, ui['font_scale_small'], (160, 160, 165), 1, cv2.LINE_AA)
+        
+        # ===== READY INDICATOR =====
+        if len(self.points) >= 3:
+            ready_text = "Ready - Press Enter"
+            (tw, th), _ = cv2.getTextSize(ready_text, FONT, ui['font_scale'], 1)
+            rx = (w - tw) // 2 - int(15*scale)
+            ry = h - int(25 * scale)
+            preview = self._draw_panel(preview, rx - int(10*scale), ry - th - int(8*scale), 
+                                       tw + int(30*scale), th + int(18*scale),
+                                       bg_color=(30, 70, 35), alpha=0.9, radius=ui['radius'])
+            cv2.putText(preview, ready_text, (rx, ry),
+                       FONT, ui['font_scale'], (140, 240, 150), 1, cv2.LINE_AA)
         
         cv2.imshow(self.WINDOW_NAME, preview)
     
@@ -118,6 +644,16 @@ class RoadZoneSelector:
         self.points = []
         self._selection_done = False
         self._cancelled = False
+        self._current_suggestion = []
+        self._show_lane_detection = False
+        
+        # Khởi tạo lane suggester và phát hiện vạch kẻ đường
+        if self.enable_suggestion:
+            self._lane_suggester = LaneLineSuggestion()
+            print("Đang phát hiện vạch kẻ đường...")
+            self._lane_suggester.detect_lanes(frame)
+            print(f"Đã phát hiện {len(self._lane_suggester.detected_lines)} đường thẳng và "
+                  f"{len(self._lane_suggester.edge_points)} contour edges")
         
         cv2.namedWindow(self.WINDOW_NAME, cv2.WINDOW_NORMAL)
         cv2.setMouseCallback(self.WINDOW_NAME, self._mouse_callback)
@@ -134,6 +670,12 @@ class RoadZoneSelector:
                     print("Cần ít nhất 3 điểm để tạo vùng!")
             elif key == ord('r') or key == ord('R'):  # Reset
                 self.points = []
+                self._current_suggestion = []
+                self._draw_preview()
+            elif key == ord('s') or key == ord('S'):  # Add suggestion points
+                self._add_suggestion_points()
+            elif key == ord('l') or key == ord('L'):  # Toggle lane detection view
+                self._show_lane_detection = not self._show_lane_detection
                 self._draw_preview()
             elif key == 27:  # Esc
                 self._cancelled = True
