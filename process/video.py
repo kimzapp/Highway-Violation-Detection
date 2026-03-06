@@ -11,6 +11,7 @@ from ultralytics import YOLO
 
 from tracking.bytetrack import ByteTracker
 from lane_detection.road_zone import RoadZoneSelector, RoadZoneOverlay
+from lane_detection.bird_eye_view import BirdEyeViewTransformer, BirdEyeViewVisualizer, create_combined_view
 
 
 class VideoProcessor:
@@ -74,6 +75,13 @@ class VideoProcessor:
         
         # Road zone overlay
         self.road_zone_overlay: Optional[RoadZoneOverlay] = None
+        
+        # Bird's Eye View
+        self.bev_transformer: Optional[BirdEyeViewTransformer] = None
+        self.bev_visualizer: Optional[BirdEyeViewVisualizer] = None
+        self.enable_bev: bool = True  # Enable BEV by default when zone is selected
+        self.bev_width: int = 400
+        self.bev_height: int = 600
         
         # Callback functions
         self._on_frame_callback: Optional[Callable] = None
@@ -222,23 +230,54 @@ class VideoProcessor:
                     alpha=0.2,
                     label="Valid Lane"
                 )
+                
+                # Initialize Bird's Eye View transformer
+                if self.enable_bev:
+                    self.bev_transformer = BirdEyeViewTransformer(
+                        source_polygon=zone_polygon,
+                        bev_width=self.bev_width,
+                        bev_height=self.bev_height,
+                        margin=50
+                    )
+                    self.bev_visualizer = BirdEyeViewVisualizer(
+                        transformer=self.bev_transformer,
+                        bg_color=(40, 40, 40),
+                        lane_color=(80, 80, 80),
+                        lane_border_color=(255, 255, 0)
+                    )
+                    if show_progress:
+                        print(f"Bird's Eye View enabled")
+                
                 if show_progress:
                     print(f"Road zone defined with {len(zone_polygon)} points")
             else:
                 self.road_zone_overlay = None
+                self.bev_transformer = None
+                self.bev_visualizer = None
                 if show_progress:
                     print("No road zone defined, skipping...")
             
             # Reset video to beginning to process all frames including first
             cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         
+        # Calculate output dimensions based on BEV
+        output_width = width
+        output_height = height
+        if self.bev_visualizer is not None:
+            # BEV will be added on the right side, scaled to match height
+            bev_scale = height / self.bev_transformer.bev_height
+            bev_display_width = int(self.bev_transformer.bev_width * bev_scale)
+            output_width = width + bev_display_width
+        
         # Video writer
         writer = None
         if output_path:
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+            writer = cv2.VideoWriter(output_path, fourcc, fps, (output_width, output_height))
             if show_progress:
                 print(f"Output will be saved to: {output_path}")
+                if self.bev_visualizer:
+                    print(f"Output resolution: {output_width}x{output_height} (with BEV)")
         
         frame_count = 0
         stopped_by_user = False
@@ -270,9 +309,24 @@ class VideoProcessor:
                 cv2.putText(annotated_frame, info_text, (10, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
                 
+                # Create Bird's Eye View if enabled
+                display_frame = annotated_frame
+                if self.bev_visualizer is not None:
+                    bev_frame = self.bev_visualizer.draw(
+                        detections=tracked_detections,
+                        class_names=self.model_names,
+                        show_ids=True,
+                        show_labels=True
+                    )
+                    display_frame = create_combined_view(
+                        camera_frame=annotated_frame,
+                        bev_frame=bev_frame,
+                        layout="horizontal"
+                    )
+                
                 # Display if enabled
                 if display:
-                    cv2.imshow("ByteTrack - Object Tracking", annotated_frame)
+                    cv2.imshow("ByteTrack - Object Tracking (with Bird's Eye View)", display_frame)
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         stopped_by_user = True
                         if show_progress:
@@ -281,7 +335,7 @@ class VideoProcessor:
                 
                 # Save frame
                 if writer:
-                    writer.write(annotated_frame)
+                    writer.write(display_frame)
                 
                 frame_count += 1
                 

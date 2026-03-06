@@ -42,6 +42,16 @@ def parse_args():
     parser.add_argument("--no-select-zone", dest="select_zone", action="store_false",
                         help="Skip road zone selection")
     
+    # Bird's Eye View options
+    parser.add_argument("--enable-bev", action="store_true", default=True,
+                        help="Enable Bird's Eye View display")
+    parser.add_argument("--no-bev", dest="enable_bev", action="store_false",
+                        help="Disable Bird's Eye View display")
+    parser.add_argument("--bev-width", type=int, default=400,
+                        help="Width of Bird's Eye View panel")
+    parser.add_argument("--bev-height", type=int, default=600,
+                        help="Height of Bird's Eye View panel")
+    
     return parser.parse_args()
 
 
@@ -60,6 +70,11 @@ def process_video_source(args):
         show_traces=args.show_traces,
         trace_length=args.trace_length
     )
+    
+    # Set BEV options
+    processor.enable_bev = args.enable_bev
+    processor.bev_width = args.bev_width
+    processor.bev_height = args.bev_height
     
     output_path = args.output if args.save_video else None
     
