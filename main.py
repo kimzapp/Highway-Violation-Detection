@@ -51,6 +51,10 @@ def parse_args():
                         help="Width of Bird's Eye View panel")
     parser.add_argument("--bev-height", type=int, default=600,
                         help="Height of Bird's Eye View panel")
+    parser.add_argument("--bev-method", type=str, default="ipm", choices=["ipm", "homography"],
+                        help="BEV transform method: 'ipm' (Inverse Perspective Mapping) or 'homography'")
+    parser.add_argument("--camera-height", type=float, default=1.5,
+                        help="Camera height in meters (for IPM method)")
     
     return parser.parse_args()
 
@@ -63,6 +67,8 @@ def process_video_source(args):
     processor.enable_bev = args.enable_bev
     processor.bev_width = args.bev_width
     processor.bev_height = args.bev_height
+    processor.bev_method = args.bev_method
+    processor.camera_height = args.camera_height
     
     output_path = args.output if args.save_video else None
     

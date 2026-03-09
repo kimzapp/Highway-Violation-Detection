@@ -10,8 +10,12 @@ from typing import Optional, Callable, Dict, Any
 from ultralytics import YOLO
 
 from tracking.bytetrack import ByteTracker
-from lane_detection.road_zone import RoadZoneSelector, RoadZoneOverlay
-from lane_detection.bird_eye_view import BirdEyeViewTransformer, BirdEyeViewVisualizer, create_combined_view
+from lane_detection.road_zone import RoadZoneSelector, RoadZoneOverlay, MultiRoadZoneOverlay
+from lane_detection.bird_eye_view import (
+    BirdEyeViewTransformer, BirdEyeViewVisualizer,
+    IPMBirdEyeViewTransformer, IPMBirdEyeViewVisualizer,
+    create_combined_view, create_transformer
+)
 
 
 class VideoProcessor:
@@ -57,11 +61,13 @@ class VideoProcessor:
         self.road_zone_overlay: Optional[RoadZoneOverlay] = None
         
         # Bird's Eye View
-        self.bev_transformer: Optional[BirdEyeViewTransformer] = None
-        self.bev_visualizer: Optional[BirdEyeViewVisualizer] = None
+        self.bev_transformer = None  # Can be BirdEyeViewTransformer or IPMBirdEyeViewTransformer
+        self.bev_visualizer = None   # Can be BirdEyeViewVisualizer or IPMBirdEyeViewVisualizer
         self.enable_bev: bool = True  # Enable BEV by default when zone is selected
         self.bev_width: int = args.bev_width
         self.bev_height: int = args.bev_height
+        self.bev_method: str = getattr(args, 'bev_method', 'ipm')  # 'ipm' or 'homography'
+        self.camera_height: float = getattr(args, 'camera_height', 1.5)  # meters
         
         # Callback functions
         self._on_frame_callback: Optional[Callable] = None
@@ -79,6 +85,114 @@ class VideoProcessor:
             trace_viz=self.show_traces,
             trace_length=self.trace_length
         )
+    
+    def _init_bev_transformer(
+        self, 
+        first_frame: np.ndarray, 
+        zone_polygon: np.ndarray,
+        zone_polygons: list = None,
+        show_progress: bool = True
+    ):
+        """
+        Khởi tạo BEV transformer với IPM, fallback về Homography nếu lỗi
+        
+        Args:
+            first_frame: Frame đầu tiên để calibrate IPM
+            zone_polygon: Polygon vùng đường (primary/combined polygon for BEV transform)
+            zone_polygons: List tất cả các valid zone polygons để hiển thị
+            show_progress: Hiển thị thông tin tiến trình
+        """
+        method_used = None
+        
+        # Nếu không có zone_polygons, wrap zone_polygon
+        if zone_polygons is None:
+            zone_polygons = [zone_polygon]
+        
+        # Thử IPM trước (nếu được chọn)
+        if self.bev_method == 'ipm':
+            try:
+                if show_progress:
+                    print("Initializing IPM Bird's Eye View...")
+                
+                h, w = first_frame.shape[:2]
+                self.bev_transformer = IPMBirdEyeViewTransformer(
+                    frame_width=w,
+                    frame_height=h,
+                    camera_height=self.camera_height,
+                    bev_width=self.bev_width,
+                    bev_height=self.bev_height,
+                    roi_polygon=zone_polygon,
+                    auto_calibrate=True
+                )
+                
+                # Calibrate từ frame
+                calibrated = self.bev_transformer.calibrate_from_frame(first_frame)
+                
+                if calibrated:
+                    info = self.bev_transformer.get_calibration_info()
+                    if show_progress:
+                        print(f"  Camera pitch: {info['pitch_angle_deg']:.1f}°")
+                        print(f"  Focal length: {info['focal_length']:.0f} px")
+                        if info['vanishing_point']:
+                            print(f"  Vanishing point: {info['vanishing_point']}")
+                
+                # Test transform một điểm để đảm bảo hoạt động
+                test_point = (w // 2, h * 3 // 4)
+                test_result = self.bev_transformer.transform_point(test_point)
+                
+                if test_result == (-1, -1):
+                    raise ValueError("IPM transform returned invalid point")
+                
+                # IPM thành công, tạo visualizer với tất cả zones
+                self.bev_visualizer = IPMBirdEyeViewVisualizer(
+                    transformer=self.bev_transformer,
+                    bg_color=(30, 30, 35),
+                    show_grid=True,
+                    show_distance_markers=True,
+                    valid_zone_polygons=zone_polygons,  # Truyền tất cả polygons để hiển thị từng zone
+                    show_zones=True,
+                    invalid_zone_color=(0, 0, 120),    # Đỏ đậm
+                    zone_alpha=0.4
+                )
+                method_used = 'IPM'
+                
+            except Exception as e:
+                if show_progress:
+                    print(f"  IPM initialization failed: {e}")
+                    print("  Falling back to Homography method...")
+                self.bev_transformer = None
+                self.bev_visualizer = None
+        
+        # Fallback về Homography nếu IPM thất bại hoặc không được chọn
+        if self.bev_transformer is None:
+            try:
+                if show_progress and self.bev_method == 'homography':
+                    print("Initializing Homography Bird's Eye View...")
+                
+                self.bev_transformer = BirdEyeViewTransformer(
+                    source_polygon=zone_polygon,
+                    bev_width=self.bev_width,
+                    bev_height=self.bev_height,
+                    margin=50
+                )
+                self.bev_visualizer = BirdEyeViewVisualizer(
+                    transformer=self.bev_transformer,
+                    bg_color=(40, 40, 40),
+                    lane_color=(80, 80, 80),
+                    lane_border_color=(255, 255, 0)
+                )
+                method_used = 'Homography'
+                
+            except Exception as e:
+                if show_progress:
+                    print(f"  Homography initialization also failed: {e}")
+                    print("  Bird's Eye View will be disabled")
+                self.bev_transformer = None
+                self.bev_visualizer = None
+                return
+        
+        if show_progress and method_used:
+            print(f"Bird's Eye View enabled ({method_used})")
     
     def set_on_frame_callback(self, callback: Callable[[np.ndarray, sv.Detections, int], np.ndarray]):
         """
@@ -190,46 +304,44 @@ class VideoProcessor:
         
         # Select road zone on first frame if enabled
         first_frame = None
+        zone_polygons = None  # Store multiple zones
         if select_road_zone:
             ret, first_frame = cap.read()
             if not ret:
                 raise ValueError("Cannot read first frame from video")
             
             if show_progress:
-                print("\n=== SELECT ROAD ZONE ===")
-                print("Click to add points, Enter to confirm, Esc to skip")
+                print("\n=== SELECT ROAD ZONES ===")
+                print("Click to add points, N for new zone, Enter to confirm, Esc to skip")
             
             selector = RoadZoneSelector()
-            zone_polygon = selector.select_zone(first_frame)
+            zone_polygons = selector.select_zones(first_frame)
             
-            if zone_polygon is not None:
-                self.road_zone_overlay = RoadZoneOverlay(
-                    zone_polygon=zone_polygon,
-                    fill_color=(0, 255, 0),
-                    border_color=(255, 255, 0),
+            if zone_polygons is not None and len(zone_polygons) > 0:
+                # Use MultiRoadZoneOverlay for multiple zones
+                self.road_zone_overlay = MultiRoadZoneOverlay(
+                    zone_polygons=zone_polygons,
                     alpha=0.2,
-                    label="Valid Lane"
                 )
                 
-                # Initialize Bird's Eye View transformer
+                # Initialize Bird's Eye View transformer with primary zone
+                # (uses first zone or combined polygon)
                 if self.enable_bev:
-                    self.bev_transformer = BirdEyeViewTransformer(
-                        source_polygon=zone_polygon,
-                        bev_width=self.bev_width,
-                        bev_height=self.bev_height,
-                        margin=50
+                    # Use combined polygon for BEV transform calibration
+                    bev_polygon = self.road_zone_overlay.get_combined_polygon()
+                    if bev_polygon is None:
+                        bev_polygon = zone_polygons[0]
+                    
+                    self._init_bev_transformer(
+                        first_frame=first_frame,
+                        zone_polygon=bev_polygon,
+                        zone_polygons=zone_polygons,  # Pass all zones for visualization
+                        show_progress=show_progress
                     )
-                    self.bev_visualizer = BirdEyeViewVisualizer(
-                        transformer=self.bev_transformer,
-                        bg_color=(40, 40, 40),
-                        lane_color=(80, 80, 80),
-                        lane_border_color=(255, 255, 0)
-                    )
-                    if show_progress:
-                        print(f"Bird's Eye View enabled")
                 
                 if show_progress:
-                    print(f"Road zone defined with {len(zone_polygon)} points")
+                    total_points = sum(len(z) for z in zone_polygons)
+                    print(f"Road zones defined: {len(zone_polygons)} zone(s), {total_points} total points")
             else:
                 self.road_zone_overlay = None
                 self.bev_transformer = None
