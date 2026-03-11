@@ -732,9 +732,11 @@ class MainWindow(QMainWindow):
                 scaled_frame = cv2.resize(rgb_frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
                 
                 # Create QImage and QPixmap
+                # Note: .copy() is required because QImage doesn't copy data from numpy array
+                # Without copy(), data may be garbage collected before display
                 h, w, ch = scaled_frame.shape
                 bytes_per_line = ch * w
-                q_image = QImage(scaled_frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
+                q_image = QImage(scaled_frame.data, w, h, bytes_per_line, QImage.Format_RGB888).copy()
                 pixmap = QPixmap.fromImage(q_image)
                 
                 self._video_display_label.setPixmap(pixmap)
