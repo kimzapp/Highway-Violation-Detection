@@ -1,0 +1,18 @@
+# Highway Detection System - Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core dependencies
+numpy>=1.21.0
+opencv-python>=4.5.0
+torch>=1.9.0
+ultralytics>=8.0.0
+supervision>=0.16.0
+
+# GUI dependencies
+PyQt5>=5.15.0
+
+# Optional: ONNX support  
+onnxruntime>=1.10.0
+
+# Optional: GPU support (uncomment if using CUDA)
+# onnxruntime-gpu>=1.10.0

@@ -294,7 +294,8 @@ class VideoProcessor:
         output_path: Optional[str] = None,
         display: bool = False,
         show_progress: bool = True,
-        select_road_zone: bool = True
+        select_road_zone: bool = True,
+        preset_zones: Optional[List[np.ndarray]] = None
     ) -> Dict[str, Any]:
         """
         Xử lý video file
@@ -305,6 +306,7 @@ class VideoProcessor:
             display: Hiển thị video trong quá trình xử lý
             show_progress: In tiến trình xử lý
             select_road_zone: Tạm dừng ở frame đầu để chọn vùng đường hợp lệ
+            preset_zones: Danh sách zones được cung cấp sẵn (bỏ qua select_road_zone nếu có)
             
         Returns:
             Dict với thông tin xử lý (frames_processed, etc.)
@@ -327,10 +329,73 @@ class VideoProcessor:
             print(f"Video: {video_path}")
             print(f"Resolution: {width}x{height}, FPS: {fps}, Total frames: {total_frames}")
         
-        # Select road zone on first frame if enabled
+        # Handle zones - either from preset or interactive selection
         first_frame = None
-        zone_polygons = None  # Store multiple zones
-        if select_road_zone:
+        zone_polygons = None
+        
+        # Use preset zones if provided
+        if preset_zones is not None and len(preset_zones) > 0:
+            zone_polygons = preset_zones
+            # Read first frame for BEV initialization
+            ret, first_frame = cap.read()
+            if not ret:
+                raise ValueError("Cannot read first frame from video")
+            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # Reset to beginning
+            
+            if show_progress:
+                print(f"Using {len(zone_polygons)} preset zone(s)")
+            
+            # Initialize road zone overlay, violation detector, and BEV for preset zones
+            # Use MultiRoadZoneOverlay for multiple zones
+            self.road_zone_overlay = MultiRoadZoneOverlay(
+                zone_polygons=zone_polygons,
+                alpha=0.2,
+            )
+            
+            # Initialize Violation Detector with valid zones
+            self.violation_detector = ViolationDetector(
+                min_violation_frames=5,
+                min_normal_frames=3,
+                enabled_violations={ViolationType.WRONG_LANE}
+            )
+            # Convert zone_polygons to numpy arrays for detector
+            np_zone_polygons = [np.array(z) for z in zone_polygons]
+            self.violation_detector.set_valid_zones(np_zone_polygons)
+            
+            # Initialize Violation Visualizer
+            self.violation_visualizer = ViolationVisualizer(
+                detector=self.violation_detector,
+                show_violation_box=True,
+                show_violation_label=True,
+                show_stats_panel=True
+            )
+            
+            if show_progress:
+                print("Violation Detector initialized (WRONG_LANE detection enabled)")
+            
+            # Initialize Bird's Eye View transformer
+            if self.enable_bev:
+                # Use combined polygon for BEV transform calibration
+                bev_polygon = self.road_zone_overlay.get_combined_polygon()
+                if bev_polygon is None:
+                    bev_polygon = zone_polygons[0]
+                
+                self._init_bev_transformer(
+                    first_frame=first_frame,
+                    zone_polygon=bev_polygon,
+                    zone_polygons=zone_polygons,  # Pass all zones for visualization
+                    show_progress=show_progress
+                )
+                
+                # Set BEV transformer to violation detector
+                if self.bev_transformer is not None:
+                    self.violation_detector.set_bev_transformer(self.bev_transformer)
+            
+            if show_progress:
+                total_points = sum(len(z) for z in zone_polygons)
+                print(f"Road zones defined: {len(zone_polygons)} zone(s), {total_points} total points")
+                
+        elif select_road_zone:
             ret, first_frame = cap.read()
             if not ret:
                 raise ValueError("Cannot read first frame from video")
