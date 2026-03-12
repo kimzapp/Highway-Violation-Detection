@@ -116,6 +116,8 @@ class ProcessingThread(QThread):
         
         # Initialize tracker
         processor._init_tracker(fps)
+        print(f"Tracker initialized: box_annotator={processor.tracker.box_annotator is not None}, "
+              f"trace_annotator={processor.tracker.trace_annotator is not None}")
         
         print(f"Video: {video_path}")
         print(f"Resolution: {width}x{height}, FPS: {fps}, Total frames: {total_frames}")
@@ -202,6 +204,8 @@ class ProcessingThread(QThread):
         
         frame_count = 0
         print("Processing...")
+        print(f"  Tracker visualization: boxes={processor.show_boxes}, labels={processor.show_labels}, traces={processor.show_traces}")
+        print(f"  Class filter: {processor.classes if processor.classes else 'None (detect all)'}")
         
         try:
             while self._is_running:
@@ -740,6 +744,8 @@ class MainWindow(QMainWindow):
                 pixmap = QPixmap.fromImage(q_image)
                 
                 self._video_display_label.setPixmap(pixmap)
+                # Force immediate repaint to ensure frame is displayed
+                self._video_display_label.repaint()
         except Exception as e:
             print(f"Error displaying frame: {e}")
             

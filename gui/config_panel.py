@@ -29,7 +29,7 @@ class ProcessingConfig:
     # Detection settings
     conf_threshold: float = 0.25
     iou_threshold: float = 0.5
-    classes: List[int] = field(default_factory=lambda: [2, 3, 5, 7])  # car, motorcycle, bus, truck
+    classes: List[int] = field(default_factory=list)  # Empty = detect all classes (compatible with custom models)
     
     # Tracker settings  
     max_age: int = 90
@@ -331,7 +331,7 @@ class ConfigPanel(QWidget):
         
         for i, (class_id, class_name) in enumerate(VEHICLE_CLASSES.items()):
             checkbox = QCheckBox(f"{class_name} (ID: {class_id})")
-            checkbox.setChecked(class_id in [2, 3, 5, 7])  # Default vehicle classes
+            checkbox.setChecked(True)  # Default: detect all classes (compatible with custom models)
             self._class_checkboxes[class_id] = checkbox
             class_grid.addWidget(checkbox, i // 3, i % 3)
             
@@ -555,23 +555,25 @@ class ConfigPanel(QWidget):
             self._model_path_edit.setText(model_path)
             
     def _detect_gpu(self):
-        """Phát hiện GPU khả dụng"""
         try:
             import torch
+
             if torch.cuda.is_available():
-                gpu_name = torch.cuda.get_device_name(0)
-                gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
-                self._gpu_info_label.setText(f"✅ {gpu_name} ({gpu_memory:.1f}GB)")
-                self._gpu_info_label.setStyleSheet("color: #4CAF50;")
+                prop = torch.cuda.get_device_properties(0)
+                name = prop.name
+                mem = prop.total_memory / 1e9
+                text = f"✅ {name} ({mem:.1f}GB)"
+                color = "#4CAF50"
             else:
-                self._gpu_info_label.setText("❌ Không tìm thấy GPU CUDA")
-                self._gpu_info_label.setStyleSheet("color: #f44336;")
-        except ImportError:
-            self._gpu_info_label.setText("⚠️ PyTorch chưa được cài đặt")
-            self._gpu_info_label.setStyleSheet("color: #ff9800;")
-        except Exception as e:
-            self._gpu_info_label.setText(f"❌ Lỗi: {str(e)}")
-            self._gpu_info_label.setStyleSheet("color: #f44336;")
+                text = "⚠️ Đang chạy bằng CPU"
+                color = "#ff9800"
+
+        except Exception:
+            text = "❌ Không thể kiểm tra GPU"
+            color = "#f44336"
+
+        self._gpu_info_label.setText(text)
+        self._gpu_info_label.setStyleSheet(f"color: {color};")
             
     def _select_vehicle_classes(self):
         """Chọn các class xe cộ"""
