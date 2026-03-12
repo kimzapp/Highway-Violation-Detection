@@ -10,8 +10,8 @@ from typing import Optional, Callable, Dict, Any, List
 
 from models import load_model, PTModelHandler
 from tracking.bytetrack import ByteTracker
-from lane_detection.road_zone import RoadZoneSelector, RoadZoneOverlay, MultiRoadZoneOverlay
-from lane_detection.bird_eye_view import (
+from lane_mapping.road_zone import RoadZoneSelector, RoadZoneOverlay, MultiRoadZoneOverlay
+from lane_mapping.bird_eye_view import (
     BirdEyeViewTransformer, BirdEyeViewVisualizer,
     IPMBirdEyeViewTransformer, IPMBirdEyeViewVisualizer,
     create_combined_view

@@ -20,8 +20,8 @@ from PyQt5.QtGui import (
 )
 
 # Import LaneLineSuggestion từ road_zone module
-from lane_detection.road_zone import LaneLineSuggestion
-from lane_detection.bird_eye_view import (
+from lane_mapping.road_zone import LaneLineSuggestion
+from lane_mapping.bird_eye_view import (
     BirdEyeViewTransformer, 
     BirdEyeViewVisualizer,
     IPMBirdEyeViewTransformer, 

@@ -96,8 +96,8 @@ class ProcessingThread(QThread):
     
     def _process_video_for_gui(self, video_path: str, output_path: Optional[str], preset_zones):
         """Xử lý video và emit frame về GUI thay vì dùng cv2.imshow"""
-        from lane_detection.road_zone import MultiRoadZoneOverlay
-        from lane_detection.bird_eye_view import create_combined_view
+        from lane_mapping.road_zone import MultiRoadZoneOverlay
+        from lane_mapping.bird_eye_view import create_combined_view
         from violations import ViolationDetector, ViolationVisualizer, ViolationType
         
         processor = self._processor
