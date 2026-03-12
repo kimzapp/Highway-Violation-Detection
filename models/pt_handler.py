@@ -47,10 +47,14 @@ class PTModelHandler(BaseModelHandler):
         iou: float = 0.45,
         classes: Optional[List[int]] = None,
         imgsz: int = 640,
+        half: bool = True,
         **kwargs
     ) -> Any:
         """
         Chạy inference với Ultralytics YOLO
+        
+        Args:
+            half: Use FP16 half precision for faster inference on GPU
         
         Returns:
             Ultralytics Results object
@@ -58,12 +62,16 @@ class PTModelHandler(BaseModelHandler):
         if self._ultralytics_model is None:
             raise RuntimeError("Model chưa được load. Gọi load() trước.")
         
+        # FP16 only works on CUDA, disable for CPU
+        use_half = half and self.device != "cpu"
+        
         results = self._ultralytics_model(
             image,
             conf=conf,
             iou=iou,
             classes=classes,
             imgsz=imgsz,
+            half=use_half,
             verbose=False,
             **kwargs
         )

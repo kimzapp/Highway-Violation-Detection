@@ -85,7 +85,7 @@ class ByteTracker:
         updated_detections = self.tracker.update_with_detections(detections)
         return updated_detections
     
-    def update_and_annotate(self, scene, detections, labels=None):
+    def update_and_annotate(self, scene, detections, labels=None, copy_scene=True):
         """
         Cập nhật tracker và vẽ annotations lên scene
         
@@ -93,12 +93,18 @@ class ByteTracker:
             scene: Hình ảnh (frame) để vẽ
             detections: sv.Detections object chứa bounding boxes, class_id, confidence
             labels: List of labels tương ứng với detections (optional)
+            copy_scene: Copy scene trước khi annotate (False = in-place, nhanh hơn)
         Returns:
             annotated_scene: Hình ảnh đã được vẽ annotations
             updated_detections: sv.Detections object có thêm tracker_id
         """
-        annotated_scene = scene.copy()
+        # Only copy if needed (saving memory allocation time)
+        annotated_scene = scene.copy() if copy_scene else scene
         updated_detections = self.update(detections)
+        
+        # Skip annotation entirely if nothing to draw
+        if not (self.trace_viz or self.box_viz):
+            return annotated_scene, updated_detections
         
         if self.trace_viz and self.trace_annotator:
             annotated_scene = self.trace_annotator.annotate(

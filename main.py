@@ -56,6 +56,14 @@ def parse_args():
     parser.add_argument("--camera-height", type=float, default=1.5,
                         help="Camera height in meters (for IPM method)")
     
+    # Performance optimization options
+    parser.add_argument("--half", action="store_true", default=True,
+                        help="Use FP16 half-precision inference (CUDA only, faster)")
+    parser.add_argument("--no-half", dest="half", action="store_false",
+                        help="Disable FP16 half-precision inference")
+    parser.add_argument("--skip-bev-frames", type=int, default=0,
+                        help="Skip BEV update every N frames (0=no skip, higher=faster but less smooth)")
+    
     return parser.parse_args()
 
 

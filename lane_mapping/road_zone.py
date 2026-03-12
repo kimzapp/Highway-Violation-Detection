@@ -1025,10 +1025,15 @@ class MultiRoadZoneOverlay:
             self.labels = [f"Zone {i+1}" for i in range(num_zones)]
         else:
             self.labels = labels
+        
+        # Cache cho overlay tĩnh (tối ưu hiệu năng)
+        self._cached_overlay: Optional[np.ndarray] = None
+        self._cached_mask: Optional[np.ndarray] = None
+        self._cache_shape: Optional[Tuple[int, int]] = None
     
     def draw(self, frame: np.ndarray) -> np.ndarray:
         """
-        Vẽ tất cả vùng đường lên frame
+        Vẽ tất cả vùng đường lên frame (có cache để tối ưu)
         
         Args:
             frame: Frame cần vẽ (BGR)
@@ -1039,7 +1044,35 @@ class MultiRoadZoneOverlay:
         if not self.zone_polygons:
             return frame
         
+        h, w = frame.shape[:2]
+        
+        # Kiểm tra và tạo cache nếu cần
+        if (self._cached_overlay is None or 
+            self._cache_shape != (h, w)):
+            self._build_cache(h, w)
+        
+        # Fast blending với cached overlay và mask
         result = frame.copy()
+        mask = self._cached_mask
+        
+        # Blend chỉ ở vùng có mask (nhanh hơn addWeighted toàn frame)
+        np.copyto(result, 
+                  cv2.addWeighted(frame, 1 - self.alpha, self._cached_overlay, self.alpha, 0),
+                  where=mask[:, :, np.newaxis])
+        
+        return result
+    
+    def _build_cache(self, height: int, width: int):
+        """
+        Xây dựng cache cho overlay tĩnh
+        
+        Args:
+            height: Chiều cao frame
+            width: Chiều rộng frame
+        """
+        self._cached_overlay = np.zeros((height, width, 3), dtype=np.uint8)
+        self._cached_mask = np.zeros((height, width), dtype=bool)
+        self._cache_shape = (height, width)
         
         for i, zone_polygon in enumerate(self.zone_polygons):
             if zone_polygon is None or len(zone_polygon) < 3:
@@ -1048,13 +1081,16 @@ class MultiRoadZoneOverlay:
             fill_color = self.fill_colors[i] if i < len(self.fill_colors) else self.DEFAULT_COLORS[0]
             label = self.labels[i] if i < len(self.labels) else f"Zone {i+1}"
             
-            # Vẽ fill với transparency
-            overlay = result.copy()
-            cv2.fillPoly(overlay, [zone_polygon], fill_color)
-            result = cv2.addWeighted(overlay, self.alpha, result, 1 - self.alpha, 0)
+            # Vẽ fill
+            cv2.fillPoly(self._cached_overlay, [zone_polygon], fill_color)
+            
+            # Tạo mask
+            zone_mask = np.zeros((height, width), dtype=np.uint8)
+            cv2.fillPoly(zone_mask, [zone_polygon], 255)
+            self._cached_mask = self._cached_mask | (zone_mask > 0)
             
             # Vẽ viền
-            cv2.polylines(result, [zone_polygon], isClosed=True, 
+            cv2.polylines(self._cached_overlay, [zone_polygon], isClosed=True, 
                          color=fill_color, thickness=self.border_thickness)
             
             # Vẽ label ở góc trên của polygon
@@ -1065,14 +1101,12 @@ class MultiRoadZoneOverlay:
                 
                 # Background cho text
                 (text_w, text_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-                cv2.rectangle(result, 
+                cv2.rectangle(self._cached_overlay, 
                              (label_pos[0] - 2, label_pos[1] - text_h - 5),
                              (label_pos[0] + text_w + 2, label_pos[1] + 5),
                              fill_color, -1)
-                cv2.putText(result, label, label_pos,
+                cv2.putText(self._cached_overlay, label, label_pos,
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
-        
-        return result
     
     def is_point_inside(self, point: Tuple[int, int]) -> bool:
         """

@@ -63,6 +63,10 @@ class VideoProcessor:
         self.show_traces = args.show_traces
         self.trace_length = args.trace_length
         
+        # Performance optimization options
+        self.use_half = getattr(args, 'half', True)  # Use FP16 for GPU
+        self.skip_bev_frames = getattr(args, 'skip_bev_frames', 0)  # Skip BEV every N frames
+        
         # Tracker sẽ được khởi tạo khi biết fps
         self.tracker: Optional[ByteTracker] = None
         
@@ -77,6 +81,7 @@ class VideoProcessor:
         self.bev_height: int = args.bev_height
         self.bev_method: str = getattr(args, 'bev_method', 'ipm')  # 'ipm' or 'homography'
         self.camera_height: float = getattr(args, 'camera_height', 1.5)  # meters
+        self._last_bev_frame: Optional[np.ndarray] = None  # Cache last BEV frame
         
         # Callback functions
         self._on_frame_callback: Optional[Callable] = None
@@ -243,13 +248,14 @@ class VideoProcessor:
             annotated_frame: Frame đã được annotate
             tracked_detections: Detections với tracker IDs
         """
-        # Run detection với model handler
+        # Run detection với model handler (sử dụng half precision nếu có)
         results = self.model_handler.predict(
             frame, 
             conf=self.conf_threshold, 
             iou=self.iou_threshold,
             classes=self.classes,
-            imgsz=self.img_size
+            imgsz=self.img_size,
+            half=self.use_half
         )
         
         # Convert to supervision Detections
@@ -272,11 +278,12 @@ class VideoProcessor:
             else:
                 detections = sv.Detections.empty()
         
-        # Update tracker and annotate
+        # Update tracker and annotate (in-place để tránh copy)
         annotated_frame, tracked_detections = self.tracker.update_and_annotate(
             scene=frame,
             detections=detections,
-            labels=None
+            labels=None,
+            copy_scene=True  # Cần copy vì frame gốc được sử dụng lại
         )
         
         # Draw road zone overlay if defined
@@ -574,15 +581,25 @@ class VideoProcessor:
                 cv2.putText(annotated_frame, info_text, (10, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
                 
-                # Create Bird's Eye View if enabled
+                # Create Bird's Eye View if enabled (với skip frames để tối ưu)
                 display_frame = annotated_frame
                 if self.bev_visualizer is not None:
-                    bev_frame = self.bev_visualizer.draw(
-                        detections=tracked_detections,
-                        class_names=self.model_names,
-                        show_ids=True,
-                        show_labels=True
-                    )
+                    # Skip BEV calculation để tăng FPS (dùng frame cache)
+                    should_update_bev = (self.skip_bev_frames <= 0 or 
+                                        frame_count % (self.skip_bev_frames + 1) == 0 or
+                                        self._last_bev_frame is None)
+                    
+                    if should_update_bev:
+                        bev_frame = self.bev_visualizer.draw(
+                            detections=tracked_detections,
+                            class_names=self.model_names,
+                            show_ids=True,
+                            show_labels=True
+                        )
+                        self._last_bev_frame = bev_frame
+                    else:
+                        bev_frame = self._last_bev_frame
+                    
                     display_frame = create_combined_view(
                         camera_frame=annotated_frame,
                         bev_frame=bev_frame,
