@@ -5,14 +5,14 @@ Widget hiển thị video preview trong GUI
 
 import cv2
 import numpy as np
-from typing import Optional, Callable
+from typing import Optional
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QSlider, QSizePolicy, QFrame
 )
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QSize
-from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QColor
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QImage, QPixmap
 
 
 class VideoPreviewWidget(QWidget):

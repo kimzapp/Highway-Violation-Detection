@@ -12,12 +12,11 @@ from dataclasses import dataclass, field
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QGroupBox, QListWidget, QListWidgetItem,
-    QSplitter, QFrame, QMessageBox, QSizePolicy, QCheckBox
+    QSplitter, QMessageBox, QSizePolicy, QCheckBox
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QPoint
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import (
-    QImage, QPixmap, QPainter, QPen, QBrush, QColor,
-    QPolygon, QMouseEvent, QPaintEvent, QKeyEvent
+    QImage, QPixmap, QMouseEvent, QKeyEvent
 )
 
 # Import LaneLineSuggestion từ road_zone module

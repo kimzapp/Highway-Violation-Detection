@@ -13,17 +13,15 @@ from enum import Enum, auto
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QStackedWidget, QLabel, QPushButton, QProgressBar,
-    QStatusBar, QMessageBox, QApplication, QFrame,
-    QSplitter, QSizePolicy
+    QStatusBar, QMessageBox, QApplication, QFrame, QSizePolicy
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt5.QtGui import QFont, QIcon, QImage, QPixmap
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtGui import QImage, QPixmap
 
-from .source_selector import SourceSelector, SourceConfig, SourceType
+from .source_selector import SourceSelector, SourceConfig
 from .config_panel import ConfigPanel, ProcessingConfig
-from .video_preview import VideoPreviewWidget
 from .zone_selector_widget import ZoneSelectorWidget
-from .styles import apply_stylesheet, BUTTON_SUCCESS, BUTTON_DANGER
+from .styles import apply_stylesheet
 
 
 class AppState(Enum):
@@ -55,9 +53,10 @@ class ProcessingThread(QThread):
     processing_completed = pyqtSignal()
     error_occurred = pyqtSignal(str)
     
-    def __init__(self, config: AppConfig, parent=None):
+    def __init__(self, config: AppConfig, model_handler=None, parent=None):
         super().__init__(parent)
         self._config = config
+        self._model_handler = model_handler  # Pre-loaded model handler
         self._is_running = True
         self._processor = None
         
@@ -69,8 +68,8 @@ class ProcessingThread(QThread):
             # Create args-like object
             args = self._create_args()
             
-            # Create processor
-            self._processor = VideoProcessor(args)
+            # Create processor with pre-loaded model if available
+            self._processor = VideoProcessor(args, model_handler=self._model_handler)
             
             # Set BEV options
             self._processor.enable_bev = args.enable_bev
@@ -679,8 +678,11 @@ class MainWindow(QMainWindow):
         # Reset video display
         self._video_display_label.setText("Đang khởi tạo...")
         
+        # Get pre-loaded model handler from config panel
+        model_handler = self._config_panel.get_model_handler()
+        
         # Create and start processing thread
-        self._processing_thread = ProcessingThread(self._app_config, self)
+        self._processing_thread = ProcessingThread(self._app_config, model_handler, self)
         self._processing_thread.progress_updated.connect(self._on_progress_updated)
         self._processing_thread.frame_processed.connect(self._on_frame_processed)
         self._processing_thread.processing_completed.connect(self._on_processing_completed)

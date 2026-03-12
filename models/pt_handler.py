@@ -3,7 +3,7 @@ PyTorch Model Handler
 Handler cho models định dạng .pt (Ultralytics YOLO)
 """
 
-from typing import Dict, List, Optional, Any, Tuple
+from typing import List, Optional, Any, Tuple
 import numpy as np
 
 from .base import BaseModelHandler

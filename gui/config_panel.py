@@ -3,19 +3,131 @@ Configuration Panel Widget
 Widget cho phép người dùng cấu hình các tham số của hệ thống
 """
 
+import os
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, field
-import os
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
     QLabel, QPushButton, QLineEdit, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QSlider,
     QFileDialog, QScrollArea, QFrame, QTabWidget,
-    QGridLayout, QSizePolicy, QMessageBox
+    QGridLayout, QMessageBox
 )
-from PyQt5.QtCore import pyqtSignal, Qt
+from PyQt5.QtCore import pyqtSignal, Qt, QThread
 from PyQt5.QtGui import QFont
+
+
+# Danh sách các model Ultralytics được hỗ trợ tải tự động
+ULTRALYTICS_MODELS = [
+    # YOLOv8 Detection
+    "yolov8n.pt", "yolov8s.pt", "yolov8m.pt", "yolov8l.pt", "yolov8x.pt",
+    # YOLOv8 Segmentation
+    "yolov8n-seg.pt", "yolov8s-seg.pt", "yolov8m-seg.pt", "yolov8l-seg.pt", "yolov8x-seg.pt",
+    # YOLOv8 Pose
+    "yolov8n-pose.pt", "yolov8s-pose.pt", "yolov8m-pose.pt", "yolov8l-pose.pt", "yolov8x-pose.pt",
+    # YOLOv8 Classification
+    "yolov8n-cls.pt", "yolov8s-cls.pt", "yolov8m-cls.pt", "yolov8l-cls.pt", "yolov8x-cls.pt",
+    # YOLOv5
+    "yolov5n.pt", "yolov5s.pt", "yolov5m.pt", "yolov5l.pt", "yolov5x.pt",
+    "yolov5n6.pt", "yolov5s6.pt", "yolov5m6.pt", "yolov5l6.pt", "yolov5x6.pt",
+    # YOLOv9
+    "yolov9c.pt", "yolov9e.pt", "yolov9t.pt", "yolov9s.pt", "yolov9m.pt",
+    # YOLOv10
+    "yolov10n.pt", "yolov10s.pt", "yolov10m.pt", "yolov10l.pt", "yolov10x.pt",
+    # YOLO11
+    "yolo11n.pt", "yolo11s.pt", "yolo11m.pt", "yolo11l.pt", "yolo11x.pt",
+    # RT-DETR
+    "rtdetr-l.pt", "rtdetr-x.pt",
+]
+
+
+def is_ultralytics_model(model_name: str) -> bool:
+    """Kiểm tra xem model name có phải là model Ultralytics hỗ trợ không"""
+    name = os.path.basename(model_name).lower()
+    return name in [m.lower() for m in ULTRALYTICS_MODELS]
+
+
+class ModelLoaderThread(QThread):
+    """Thread để load model trong background"""
+    
+    # Signals
+    load_started = pyqtSignal()
+    load_finished = pyqtSignal(bool, str, object)  # success, message, model_handler
+    status_updated = pyqtSignal(str)  # status message for download progress
+    
+    def __init__(self, model_path: str, device: str, parent=None):
+        super().__init__(parent)
+        self._model_path = model_path
+        self._device = device
+        
+    def run(self):
+        """Load model trong thread riêng"""
+        try:
+            model_name = os.path.basename(self._model_path)
+            
+            # Kiểm tra nếu là model Ultralytics và file chưa tồn tại
+            if not os.path.exists(self._model_path):
+                if is_ultralytics_model(model_name):
+                    # Tải model từ Ultralytics
+                    self.status_updated.emit(f"⬇️ Đang tải xuống {model_name}...")
+                    try:
+                        from ultralytics import YOLO
+                        # YOLO sẽ tự động download nếu model chưa có
+                        model = YOLO(model_name)
+                        model.to(self._device)
+                        
+                        # Wrap trong PTModelHandler để đồng nhất interface
+                        from models.pt_handler import PTModelHandler
+                        handler = PTModelHandler(model_name, self._device)
+                        handler._ultralytics_model = model
+                        handler._model = model
+                        handler.names = model.names
+                        
+                        class_count = len(model.names) if model.names else 0
+                        self.load_finished.emit(
+                            True, 
+                            f"Đã tải và load thành công ({class_count} classes)", 
+                            handler
+                        )
+                        return
+                        
+                    except Exception as e:
+                        self.load_finished.emit(
+                            False, 
+                            f"Không thể tải model {model_name}: {str(e)}", 
+                            None
+                        )
+                        return
+                else:
+                    # Không phải model Ultralytics và file không tồn tại
+                    supported_models = ", ".join(ULTRALYTICS_MODELS[:5]) + "..."
+                    self.load_finished.emit(
+                        False, 
+                        f"File không tồn tại. Các model tự động tải: {supported_models}", 
+                        None
+                    )
+                    return
+            
+            # File tồn tại - load bình thường
+            from models import load_model
+            
+            self.status_updated.emit("⏳ Đang load model...")
+            model_handler = load_model(self._model_path, self._device)
+            
+            # Kiểm tra model có class names không
+            if model_handler.names:
+                class_count = len(model_handler.names)
+                self.load_finished.emit(True, f"Đã load thành công ({class_count} classes)", model_handler)
+            else:
+                self.load_finished.emit(True, "Đã load thành công", model_handler)
+                
+        except FileNotFoundError as e:
+            self.load_finished.emit(False, f"File không tồn tại: {self._model_path}", None)
+        except ValueError as e:
+            self.load_finished.emit(False, f"Định dạng không hỗ trợ: {str(e)}", None)
+        except Exception as e:
+            self.load_finished.emit(False, f"Lỗi load model: {str(e)}", None)
 
 
 @dataclass 
@@ -96,14 +208,19 @@ class ConfigPanel(QWidget):
     Signals:
         config_changed: Phát ra khi cấu hình thay đổi
         config_confirmed: Phát ra khi người dùng xác nhận cấu hình
+        model_status_changed: Phát ra khi trạng thái model thay đổi (ready, error message)
     """
     
     config_changed = pyqtSignal(object)  # ProcessingConfig
     config_confirmed = pyqtSignal(object)  # ProcessingConfig
+    model_status_changed = pyqtSignal(bool, str)  # is_ready, status_message
     
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._config = ProcessingConfig()
+        self._model_handler = None  # Pre-loaded model handler
+        self._model_loader_thread: Optional[ModelLoaderThread] = None
+        self._model_ready = False
         self._setup_ui()
         self._connect_signals()
         self._load_config_to_ui()
@@ -198,6 +315,11 @@ class ConfigPanel(QWidget):
         layout = QVBoxLayout(widget)
         layout.setSpacing(15)
         
+        # Hint label
+        hint_label = QLabel("💡 Chọn preset hoặc duyệt file model - Model sẽ tự động được load")
+        hint_label.setStyleSheet("color: #666666; font-style: italic; padding: 5px;")
+        layout.addWidget(hint_label)
+        
         # Model file selection
         model_group = QGroupBox("Model File")
         model_layout = QGridLayout(model_group)
@@ -205,8 +327,12 @@ class ConfigPanel(QWidget):
         model_layout.addWidget(QLabel("Model:"), 0, 0)
         
         self._model_path_edit = QLineEdit()
-        self._model_path_edit.setPlaceholderText("Đường dẫn đến file model (.pt, .onnx)")
+        self._model_path_edit.setPlaceholderText("VD: yolov8n.pt hoặc đường dẫn đến file model")
         self._model_path_edit.setMinimumHeight(35)
+        self._model_path_edit.setToolTip(
+            "Nhập tên model Ultralytics (yolov8n.pt, yolov8s.pt,...) để tự động tải,\n"
+            "hoặc đường dẫn đến file model đã có (.pt, .onnx)"
+        )
         model_layout.addWidget(self._model_path_edit, 0, 1)
         
         self._browse_model_btn = QPushButton("Duyệt...")
@@ -222,6 +348,42 @@ class ConfigPanel(QWidget):
         self._model_preset_combo.addItem("Custom Model", "")
         self._model_preset_combo.setMinimumHeight(35)
         model_layout.addWidget(self._model_preset_combo, 1, 1, 1, 2)
+        
+        # Model status row
+        model_layout.addWidget(QLabel("Trạng thái:"), 2, 0)
+        
+        model_status_widget = QWidget()
+        model_status_layout = QHBoxLayout(model_status_widget)
+        model_status_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self._model_status_label = QLabel("⚪ Chọn preset hoặc nhập tên model để tự động tải")
+        self._model_status_label.setStyleSheet("color: #999999;")
+        self._model_status_label.setWordWrap(True)
+        model_status_layout.addWidget(self._model_status_label, 1)
+        
+        self._load_model_btn = QPushButton("🔄 Reload")
+        self._load_model_btn.setMinimumHeight(35)
+        self._load_model_btn.setMinimumWidth(100)
+        self._load_model_btn.setToolTip("Load lại model (dùng khi thay đổi device)")
+        self._load_model_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                font-weight: bold;
+                padding: 8px 16px;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+            QPushButton:disabled {
+                background-color: #BDBDBD;
+            }
+        """)
+        model_status_layout.addWidget(self._load_model_btn)
+        
+        model_layout.addWidget(model_status_widget, 2, 1, 1, 2)
         
         layout.addWidget(model_group)
         
@@ -519,6 +681,14 @@ class ConfigPanel(QWidget):
         self._browse_model_btn.clicked.connect(self._browse_model_file)
         self._model_preset_combo.currentIndexChanged.connect(self._on_model_preset_changed)
         self._detect_gpu_btn.clicked.connect(self._detect_gpu)
+        self._load_model_btn.clicked.connect(self._load_model)
+        
+        # Auto reset model status when model path changes (user typing manually)
+        self._model_path_edit.textChanged.connect(self._on_model_path_changed)
+        # Load model when user press Enter
+        self._model_path_edit.returnPressed.connect(self._load_model)
+        # Auto reload when device changes
+        self._device_combo.currentIndexChanged.connect(self._on_device_changed)
         
         # Threshold sliders and spinboxes
         self._conf_slider.valueChanged.connect(lambda v: self._conf_spin.setValue(v / 100))
@@ -533,6 +703,89 @@ class ConfigPanel(QWidget):
         # Buttons
         self._reset_btn.clicked.connect(self._reset_to_defaults)
         self._confirm_btn.clicked.connect(self._on_confirm)
+    
+    def _on_model_path_changed(self):
+        """Reset model status khi người dùng thay đổi path thủ công"""
+        # Chỉ reset, không auto load (người dùng đang gõ)
+        self._model_ready = False
+        self._model_handler = None
+        
+        model_name = self._model_path_edit.text().strip()
+        if model_name:
+            if is_ultralytics_model(model_name):
+                self._model_status_label.setText("⚪ Nhấn Enter để tải và load model")
+            else:
+                self._model_status_label.setText("⚪ Nhấn Enter để load model")
+        else:
+            self._model_status_label.setText("⚪ Chọn preset hoặc nhập tên model")
+        
+        self._model_status_label.setStyleSheet("color: #999999;")
+        self._load_model_btn.setEnabled(True)
+        self.model_status_changed.emit(False, "Chưa load model")
+    
+    def _on_device_changed(self):
+        """Tự động reload model khi thay đổi device"""
+        model_path = self._model_path_edit.text().strip()
+        if model_path and self._model_handler is not None:
+            # Đã có model trước đó, tự động reload với device mới
+            self._load_model()
+    
+    def _load_model(self):
+        """Bắt đầu load model trong background"""
+        model_path = self._model_path_edit.text().strip()
+        device = self._device_combo.currentData() or "cpu"
+        
+        if not model_path:
+            self._model_status_label.setText("❌ Chưa chọn model")
+            self._model_status_label.setStyleSheet("color: #f44336;")
+            return
+        
+        # Nếu đang load thì không làm gì
+        if self._model_loader_thread is not None and self._model_loader_thread.isRunning():
+            return
+        
+        # Update UI
+        self._model_status_label.setText("⏳ Đang load model...")
+        self._model_status_label.setStyleSheet("color: #FF9800;")
+        self._load_model_btn.setEnabled(False)
+        self._load_model_btn.setText("⏳ Đang load...")
+        
+        # Create and start loader thread
+        self._model_loader_thread = ModelLoaderThread(model_path, device, self)
+        self._model_loader_thread.load_finished.connect(self._on_model_load_finished)
+        self._model_loader_thread.status_updated.connect(self._on_model_status_updated)
+        self._model_loader_thread.start()
+    
+    def _on_model_status_updated(self, status: str):
+        """Callback khi có cập nhật trạng thái trong quá trình load"""
+        self._model_status_label.setText(status)
+        self._model_status_label.setStyleSheet("color: #FF9800;")
+    
+    def _on_model_load_finished(self, success: bool, message: str, model_handler):
+        """Callback khi load model xong"""
+        self._load_model_btn.setEnabled(True)
+        self._load_model_btn.setText("🔄 Reload")
+        
+        if success:
+            self._model_ready = True
+            self._model_handler = model_handler
+            self._model_status_label.setText(f"✅ {message}")
+            self._model_status_label.setStyleSheet("color: #4CAF50;")
+            self.model_status_changed.emit(True, message)
+        else:
+            self._model_ready = False
+            self._model_handler = None
+            self._model_status_label.setText(f"❌ {message}")
+            self._model_status_label.setStyleSheet("color: #f44336;")
+            self.model_status_changed.emit(False, message)
+    
+    def get_model_handler(self):
+        """Lấy model handler đã load sẵn"""
+        return self._model_handler
+    
+    def is_model_ready(self) -> bool:
+        """Kiểm tra model đã sẵn sàng chưa"""
+        return self._model_ready
         
     def _browse_model_file(self):
         """Mở dialog chọn model file"""
@@ -543,16 +796,31 @@ class ConfigPanel(QWidget):
             "Model Files (*.pt *.pth *.onnx);;All Files (*.*)"
         )
         if file_path:
-            self._model_path_edit.setText(file_path)
+            # Tạm ngắt signal để tránh trigger _on_model_path_changed
+            self._model_preset_combo.blockSignals(True)
+            self._model_path_edit.blockSignals(True)
+            
             self._model_preset_combo.setCurrentIndex(
                 self._model_preset_combo.count() - 1  # Select "Custom Model"
             )
+            self._model_path_edit.setText(file_path)
+            
+            self._model_preset_combo.blockSignals(False)
+            self._model_path_edit.blockSignals(False)
+            
+            # Tự động load model sau khi chọn file
+            self._load_model()
             
     def _on_model_preset_changed(self, index: int):
         """Xử lý khi chọn preset model"""
         model_path = self._model_preset_combo.currentData()
         if model_path:
+            # Block signal để tránh trigger _on_model_path_changed
+            self._model_path_edit.blockSignals(True)
             self._model_path_edit.setText(model_path)
+            self._model_path_edit.blockSignals(False)
+            # Tự động load model khi chọn preset
+            self._load_model()
             
     def _detect_gpu(self):
         try:
@@ -695,6 +963,23 @@ class ConfigPanel(QWidget):
     def _on_confirm(self):
         """Xử lý khi nhấn xác nhận"""
         self._save_ui_to_config()
+        
+        # Kiểm tra model đã được load chưa
+        if not self._model_ready:
+            reply = QMessageBox.question(
+                self,
+                "Model chưa được load",
+                "Model chưa được load. Bạn có muốn load model trước khi tiếp tục?\n\n"
+                "- Nhấn 'Yes' để load model trước\n"
+                "- Nhấn 'No' để tiếp tục (model sẽ được load khi xử lý)",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes
+            )
+            
+            if reply == QMessageBox.Yes:
+                self._load_model()
+                return
+        
         self.config_confirmed.emit(self._config)
         
     def get_config(self) -> ProcessingConfig:

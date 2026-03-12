@@ -11,10 +11,9 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
     QLabel, QPushButton, QLineEdit, QComboBox,
     QFileDialog, QRadioButton, QButtonGroup,
-    QFrame, QSizePolicy, QSpacerItem
 )
 from PyQt5.QtCore import pyqtSignal, Qt
-from PyQt5.QtGui import QFont, QIcon
+from PyQt5.QtGui import QFont
 
 
 class SourceType(Enum):

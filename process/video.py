@@ -8,15 +8,16 @@ import numpy as np
 import supervision as sv
 from typing import Optional, Callable, Dict, Any, List
 
-from models import load_model, BaseModelHandler, PTModelHandler
+from models import load_model, PTModelHandler
 from tracking.bytetrack import ByteTracker
 from lane_detection.road_zone import RoadZoneSelector, RoadZoneOverlay, MultiRoadZoneOverlay
 from lane_detection.bird_eye_view import (
     BirdEyeViewTransformer, BirdEyeViewVisualizer,
     IPMBirdEyeViewTransformer, IPMBirdEyeViewVisualizer,
-    create_combined_view, create_transformer
+    create_combined_view
 )
 from violations import ViolationDetector, ViolationVisualizer, ViolationType
+from .fps_counter import FPSCounter
 
 
 class VideoProcessor:
@@ -29,18 +30,25 @@ class VideoProcessor:
         model_names: Dict mapping class_id to class name
     """
     
-    def __init__(self, args):
+    def __init__(self, args, model_handler=None):
         """
         Khởi tạo VideoProcessor
         
         Attributes:
             args: Parsed command-line arguments
-            model_handler: Model handler được tải lên device
+            model_handler: Model handler được tải lên device (có thể truyền vào nếu đã load sẵn)
             tracker: ByteTracker sẽ được khởi tạo sau khi biết fps
 
         """
-        # Load model với auto-detection định dạng
-        self.model_handler = load_model(args.model, args.device)
+        # Sử dụng model handler đã load sẵn nếu có, nếu không thì load mới
+        if model_handler is not None:
+            self.model_handler = model_handler
+            print("Using pre-loaded model handler")
+        else:
+            # Load model với auto-detection định dạng
+            self.model_handler = load_model(args.model, args.device)
+            print(f"Loaded model from: {args.model}")
+        
         self.model_names = self.model_handler.names
         
         self.device = args.device
@@ -78,9 +86,15 @@ class VideoProcessor:
         self.violation_detector: Optional[ViolationDetector] = None
         self.violation_visualizer: Optional[ViolationVisualizer] = None
         self._current_violations: Dict[int, List[ViolationType]] = {}
+        
+        # FPS counter for processing performance
+        self.fps_counter: FPSCounter = FPSCounter(window_size=30)
     
     def _init_tracker(self, fps: int = 30):
         """Khởi tạo tracker với fps thực tế"""
+        # Reset FPS counter for new video
+        self.fps_counter.reset()
+        
         self.tracker = ByteTracker(
             track_activation_threshold=self.conf_threshold,
             lost_track_buffer=self.max_age,
@@ -554,8 +568,9 @@ class VideoProcessor:
                         annotated_frame, tracked_detections, frame_count
                     )
                 
-                # Add frame info overlay
-                info_text = f"Frame: {frame_count}/{total_frames} | Tracks: {len(tracked_detections)}"
+                # Add frame info overlay with FPS
+                proc_fps = self.fps_counter.avg_fps
+                info_text = f"Frame: {frame_count}/{total_frames} | Tracks: {len(tracked_detections)} | FPS: {proc_fps:.1f}"
                 cv2.putText(annotated_frame, info_text, (10, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
                 
@@ -588,6 +603,9 @@ class VideoProcessor:
                     writer.write(display_frame)
                 
                 frame_count += 1
+                
+                # Update FPS counter
+                self.fps_counter.tick()
                 
                 # Print progress
                 if show_progress and frame_count % 100 == 0:
