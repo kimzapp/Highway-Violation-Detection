@@ -1,0 +1,240 @@
+# 🚗 Highway Detection System
+
+Hệ thống giám sát và phân tích giao thông đường cao tốc sử dụng Deep Learning. Hệ thống tích hợp phát hiện đối tượng (YOLO), theo dõi đối tượng (ByteTrack), và phát hiện vi phạm giao thông.
+
+## 📋 Mục lục
+
+- [Tính năng](#-tính-năng)
+- [Kiến trúc hệ thống](#-kiến-trúc-hệ-thống)
+- [Yêu cầu hệ thống](#-yêu-cầu-hệ-thống)
+- [Cài đặt](#-cài-đặt)
+- [Hướng dẫn sử dụng](#-hướng-dẫn-sử-dụng)
+- [Cấu trúc thư mục](#-cấu-trúc-thư-mục)
+- [Tính năng dự kiến](#-tính-năng-dự-kiến)
+
+## ✨ Tính năng
+
+### 1. Phát hiện đối tượng (Object Detection)
+- Sử dụng **YOLOv8** để phát hiện phương tiện giao thông
+- Hỗ trợ cả định dạng **PyTorch (.pt)** và **ONNX (.onnx)**
+- Có thể chọn lọc các loại đối tượng cần theo dõi (ô tô, xe máy, xe tải, v.v.)
+
+### 2. Theo dõi đối tượng (Object Tracking)
+- Tích hợp **ByteTrack** thông qua thư viện Supervision
+- Theo dõi liên tục các phương tiện qua nhiều frame
+- Hiển thị đường di chuyển (trace) của từng phương tiện
+- Gán ID duy nhất cho mỗi phương tiện được theo dõi
+
+### 3. Chọn vùng đường (Road Zone Selection)
+- Cho phép người dùng vẽ vùng giám sát trên video
+- Hỗ trợ chọn **nhiều vùng** đồng thời (multi-zone)
+- **Gợi ý tự động** các điểm trên vạch kẻ đường (sử dụng Canny Edge Detection)
+- Chỉ theo dõi phương tiện trong vùng đã chọn
+
+### 4. Bird's Eye View (Góc nhìn từ trên xuống)
+- Chuyển đổi góc nhìn camera sang góc nhìn từ trên xuống
+- Hỗ trợ 2 phương pháp:
+  - **IPM (Inverse Perspective Mapping)**: Tự động calibrate từ frame
+  - **Homography**: Sử dụng 4 điểm tương ứng
+- Hiển thị vị trí phương tiện trên bản đồ BEV real-time
+
+### 5. Phát hiện vi phạm (Violation Detection)
+- **Đi sai làn đường (Wrong Lane)**: Phát hiện phương tiện đi ngoài vùng cho phép
+- **Đi ngược chiều (Wrong Direction)**: Phát hiện phương tiện di chuyển ngược hướng giao thông
+- Hiển thị cảnh báo trực quan trên video
+- Lưu lại lịch sử vi phạm của từng phương tiện
+
+### 6. Giao diện người dùng
+- **GUI (PyQt5)**: Giao diện đồ họa thân thiện với người dùng
+- **CLI**: Dòng lệnh với nhiều tùy chọn cấu hình
+- Hiển thị FPS và thống kê xử lý real-time
+
+## 🏗 Kiến trúc hệ thống
+
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│   Input Source  │ ──► │  YOLO Detection │ ──► │ ByteTrack       │
+│ (Video/Camera)  │     │  (PT/ONNX)      │     │ Tracking        │
+└─────────────────┘     └─────────────────┘     └────────┬────────┘
+                                                         │
+                                                         ▼
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  Output Video   │ ◄── │   Visualization │ ◄── │    Violation    │
+│  + Statistics   │     │   (BEV + Zones) │     │    Detection    │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+```
+
+## 💻 Yêu cầu hệ thống
+
+- **Python**: 3.8+
+- **RAM**: 8GB+ khuyến nghị
+- **GPU**: NVIDIA CUDA-compatible (tùy chọn, để tăng tốc)
+- **Hệ điều hành**: Windows, Linux, macOS
+
+## 📦 Cài đặt
+
+### 1. Clone repository
+
+```bash
+git clone https://github.com/your-username/highway_detection.git
+cd highway_detection
+```
+
+### 2. Tạo môi trường ảo (khuyến nghị)
+
+```bash
+# Sử dụng conda
+conda create -n highway python=3.10
+conda activate highway
+
+# Hoặc sử dụng venv
+python -m venv venv
+source venv/bin/activate  # Linux/macOS
+venv\Scripts\activate     # Windows
+```
+
+### 3. Cài đặt dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4. (Tùy chọn) Cài đặt CUDA cho GPU
+
+Nếu bạn có GPU NVIDIA và muốn tăng tốc xử lý:
+
+```bash
+# Cài đặt PyTorch với CUDA
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+
+# Cài đặt ONNX Runtime GPU
+pip install onnxruntime-gpu
+```
+
+## 🚀 Hướng dẫn sử dụng
+
+### Sử dụng giao diện GUI
+
+```bash
+python run_gui.py
+```
+
+Các bước sử dụng GUI:
+1. **Chọn nguồn video**: Chọn file video từ máy tính
+2. **Cấu hình xử lý**: Chọn model, thiết lập ngưỡng confidence, v.v.
+3. **Chọn vùng đường**: Vẽ vùng giám sát trên frame đầu tiên
+4. **Xử lý**: Hệ thống sẽ tự động phát hiện, theo dõi và phân tích
+
+### Sử dụng Command Line (CLI)
+
+```bash
+# Cơ bản - xử lý video với hiển thị
+python main.py --source video --input path/to/video.mp4 --display
+
+# Lưu video output
+python main.py --source video --input input.mp4 --output output.mp4 --save-video
+
+# Sử dụng GPU
+python main.py --source video --input input.mp4 --device cuda --display
+
+# Tùy chỉnh model và ngưỡng
+python main.py --source video --input input.mp4 --model models/weights/best.pt --conf-thres 0.5 --display
+
+# Chỉ theo dõi một số loại đối tượng (VD: cars=2, trucks=7)
+python main.py --source video --input input.mp4 --classes 2 7 --display
+
+# Tắt Bird's Eye View
+python main.py --source video --input input.mp4 --no-bev --display
+
+# Bỏ qua bước chọn vùng đường
+python main.py --source video --input input.mp4 --no-select-zone --display
+```
+
+### Các tham số CLI
+
+| Tham số | Mặc định | Mô tả |
+|---------|----------|-------|
+| `--source` | video | Loại nguồn: video, webcam, rtsp, images |
+| `--input` | input.mp4 | Đường dẫn đến file/URL input |
+| `--output` | output.mp4 | Đường dẫn lưu video output |
+| `--model` | yolov8n.pt | Đường dẫn đến model YOLO |
+| `--device` | cpu | Device: cpu hoặc cuda |
+| `--conf-thres` | 0.25 | Ngưỡng confidence |
+| `--iou-thres` | 0.5 | Ngưỡng IoU cho tracking |
+| `--classes` | None | Lọc theo class ID |
+| `--enable-bev` | True | Bật Bird's Eye View |
+| `--bev-method` | ipm | Phương pháp BEV: ipm hoặc homography |
+| `--select-zone` | True | Cho phép chọn vùng đường |
+
+## 📁 Cấu trúc thư mục
+
+```
+highway_detection/
+├── main.py                 # Entry point CLI
+├── run_gui.py              # Entry point GUI
+├── requirements.txt        # Dependencies
+├── yolov8n.pt              # Pre-trained YOLO model
+│
+├── gui/                    # Giao diện người dùng (PyQt5)
+│   ├── main_window.py      # Cửa sổ chính
+│   ├── config_panel.py     # Panel cấu hình
+│   ├── source_selector.py  # Chọn nguồn video
+│   ├── zone_selector_widget.py  # Widget chọn vùng
+│   └── styles.py           # CSS styles
+│
+├── models/                 # Model handlers
+│   ├── loader.py           # Factory loader
+│   ├── pt_handler.py       # PyTorch model handler
+│   ├── onnx_handler.py     # ONNX model handler
+│   └── weights/            # Thư mục chứa model weights
+│
+├── process/                # Xử lý video
+│   ├── video.py            # Video processor chính
+│   └── fps_counter.py      # Đếm FPS
+│
+├── tracking/               # Theo dõi đối tượng
+│   ├── bytetrack.py        # ByteTrack implementation
+│   └── export_yolo.py      # Export detections
+│
+├── lane_mapping/           # Xử lý làn đường
+│   ├── road_zone.py        # Chọn và quản lý vùng đường
+│   └── bird_eye_view.py    # Chuyển đổi BEV
+│
+├── violations/             # Phát hiện vi phạm
+│   └── detector.py         # Violation detector
+│
+├── outputs/                # Thư mục lưu kết quả
+└── tests/                  # Unit tests
+```
+
+## 🔮 Tính năng dự kiến
+
+Các tính năng đang được phát triển:
+
+- [ ] **Webcam Processing**: Xử lý video trực tiếp từ webcam
+- [ ] **RTSP Streaming**: Hỗ trợ luồng video RTSP từ camera IP
+- [ ] **Image Folder Processing**: Xử lý từ thư mục ảnh
+- [ ] **Speeding Detection**: Phát hiện vượt quá tốc độ cho phép
+- [ ] **Illegal Overtake Detection**: Phát hiện vượt xe trái phép  
+- [ ] **Stop Line Violation**: Phát hiện vượt vạch dừng
+- [ ] **License Plate Recognition**: Nhận dạng biển số xe vi phạm
+- [ ] **Export Report**: Xuất báo cáo vi phạm (PDF/Excel)
+- [ ] **Database Integration**: Lưu trữ dữ liệu vi phạm vào database
+
+## 📄 License
+
+MIT License - Xem file [LICENSE](LICENSE) để biết thêm chi tiết.
+
+## 🤝 Đóng góp
+
+Mọi đóng góp đều được hoan nghênh! Vui lòng:
+
+1. Fork repository
+2. Tạo branch mới (`git checkout -b feature/AmazingFeature`)
+3. Commit changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to branch (`git push origin feature/AmazingFeature`)
+5. Mở Pull Request
+
+## 📧 Liên hệ
+
+Nếu có câu hỏi hoặc góp ý, vui lòng tạo issue trên GitHub.
