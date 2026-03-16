@@ -117,6 +117,30 @@ def verify_build():
         return False
 
 
+def run_release_pipeline(set_version: str = None, installer: bool = False):
+    """Run release staging script after build."""
+    root = get_project_root()
+    release_script = root / 'scripts' / 'release.py'
+
+    if not release_script.exists():
+        print(f"Error: Release script not found: {release_script}")
+        return False
+
+    cmd = [sys.executable, str(release_script)]
+    if set_version:
+        cmd.extend(['--set-version', set_version])
+    if installer:
+        cmd.append('--installer')
+
+    print(f"\nRunning release pipeline: {' '.join(cmd)}")
+    try:
+        subprocess.run(cmd, cwd=str(root), check=True)
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"Release pipeline failed with error code: {e.returncode}")
+        return False
+
+
 def main():
     """Main entry point"""
     import argparse
@@ -128,6 +152,12 @@ def main():
                        help='Build with console window for debugging')
     parser.add_argument('--check-only', action='store_true',
                        help='Only check dependencies, do not build')
+    parser.add_argument('--release', action='store_true',
+                       help='Stage release folder after successful build')
+    parser.add_argument('--installer', action='store_true',
+                       help='Stage release folder and build installer after successful build')
+    parser.add_argument('--set-version', type=str,
+                       help='Set semantic version before release, e.g. 1.2.3')
     
     args = parser.parse_args()
     
@@ -145,7 +175,12 @@ def main():
     
     # Run build
     if run_pyinstaller(clean=args.clean, debug=args.debug):
-        verify_build()
+        if not verify_build():
+            sys.exit(1)
+
+        if args.release or args.installer or args.set_version:
+            if not run_release_pipeline(set_version=args.set_version, installer=args.installer):
+                sys.exit(1)
     else:
         sys.exit(1)
 

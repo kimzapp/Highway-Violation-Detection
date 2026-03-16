@@ -22,6 +22,7 @@ from .source_selector import SourceSelector, SourceConfig
 from .config_panel import ConfigPanel, ProcessingConfig
 from .zone_selector_widget import ZoneSelectorWidget
 from .styles import apply_stylesheet
+from app_version import get_display_version
 
 
 class AppState(Enum):
@@ -424,7 +425,7 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         
         # Version
-        version = QLabel("v1.0.0")
+        version = QLabel(get_display_version())
         version.setStyleSheet("color: rgba(255, 255, 255, 0.7);")
         layout.addWidget(version)
         
