@@ -7,7 +7,7 @@ __pycache__
 venv
 build
 dist
-*.spec
+# *.spec
 release/app
 release/installer
 release/release_info.txt
