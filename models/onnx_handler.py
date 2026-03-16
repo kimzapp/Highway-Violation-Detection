@@ -4,11 +4,70 @@ Handler cho models định dạng .onnx
 """
 
 from typing import Dict, List, Optional, Any, Tuple
+import os
+import sys
 import traceback
 import numpy as np
 import cv2
 
 from .base import BaseModelHandler
+
+
+# Keep add_dll_directory handles alive for process lifetime.
+_DLL_DIRECTORY_HANDLES = []
+
+
+def _prepare_onnxruntime_dll_paths() -> List[str]:
+    """Register likely ONNX Runtime DLL folders for frozen Windows builds."""
+    if os.name != 'nt':
+        return []
+
+    candidates = []
+
+    # PyInstaller one-dir executable location.
+    exe_dir = os.path.dirname(getattr(sys, 'executable', '') or '')
+    if exe_dir:
+        candidates.extend([
+            exe_dir,
+            os.path.join(exe_dir, '_internal'),
+            os.path.join(exe_dir, '_internal', 'onnxruntime', 'capi'),
+        ])
+
+    # PyInstaller one-file extraction location.
+    meipass = getattr(sys, '_MEIPASS', None)
+    if meipass:
+        candidates.extend([
+            meipass,
+            os.path.join(meipass, 'onnxruntime', 'capi'),
+            os.path.join(meipass, '_internal'),
+            os.path.join(meipass, '_internal', 'onnxruntime', 'capi'),
+        ])
+
+    existing_dirs = []
+    seen = set()
+    for d in candidates:
+        norm = os.path.normpath(d)
+        if norm in seen:
+            continue
+        seen.add(norm)
+        if os.path.isdir(norm):
+            existing_dirs.append(norm)
+
+    if hasattr(os, 'add_dll_directory'):
+        for dll_dir in existing_dirs:
+            try:
+                _DLL_DIRECTORY_HANDLES.append(os.add_dll_directory(dll_dir))
+            except OSError:
+                pass
+
+    current_path = os.environ.get('PATH', '')
+    path_parts = [p for p in current_path.split(os.pathsep) if p]
+    for dll_dir in reversed(existing_dirs):
+        if dll_dir not in path_parts:
+            path_parts.insert(0, dll_dir)
+    os.environ['PATH'] = os.pathsep.join(path_parts)
+
+    return existing_dirs
 
 
 class ONNXModelHandler(BaseModelHandler):
@@ -52,7 +111,13 @@ class ONNXModelHandler(BaseModelHandler):
     def load(self) -> bool:
         """Load ONNX model"""
         try:
+            prepared_dirs = _prepare_onnxruntime_dll_paths()
             import onnxruntime as ort
+
+            if prepared_dirs:
+                print("ONNX runtime DLL search paths prepared:")
+                for d in prepared_dirs:
+                    print(f"  - {d}")
             
             # Chọn provider dựa trên device
             if "cuda" in self.device.lower():

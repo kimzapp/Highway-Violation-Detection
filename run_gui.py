@@ -8,6 +8,10 @@ import os
 import multiprocessing
 
 
+# Keep add_dll_directory handles alive for process lifetime.
+_DLL_DIRECTORY_HANDLES = []
+
+
 def get_base_path():
     """
     Get the base path for the application.
@@ -19,6 +23,60 @@ def get_base_path():
     else:
         # Running as script
         return os.path.dirname(os.path.abspath(__file__))
+
+
+def _setup_windows_dll_search_paths(base_path: str):
+    """Register DLL directories for bundled dependencies in frozen mode."""
+    if os.name != 'nt' or not getattr(sys, 'frozen', False):
+        return
+
+    candidate_dirs = [
+        base_path,
+        os.path.join(base_path, '_internal'),
+        os.path.join(base_path, '_internal', 'onnxruntime', 'capi'),
+        os.path.join(base_path, '_internal', 'torch', 'lib'),
+        os.path.join(base_path, '_internal', 'torch', 'bin'),
+        os.path.join(base_path, '_internal', 'numpy.libs'),
+        os.path.join(base_path, '_internal', 'scipy.libs'),
+    ]
+
+    # One-file mode may extract files to _MEIPASS instead of next to executable.
+    meipass = getattr(sys, '_MEIPASS', None)
+    if meipass:
+        candidate_dirs.extend([
+            meipass,
+            os.path.join(meipass, 'onnxruntime', 'capi'),
+            os.path.join(meipass, 'torch', 'lib'),
+            os.path.join(meipass, 'torch', 'bin'),
+            os.path.join(meipass, 'numpy.libs'),
+            os.path.join(meipass, 'scipy.libs'),
+        ])
+
+    existing_dirs = []
+    seen = set()
+    for d in candidate_dirs:
+        norm = os.path.normpath(d)
+        if norm in seen:
+            continue
+        seen.add(norm)
+        if os.path.isdir(norm):
+            existing_dirs.append(norm)
+
+    if hasattr(os, 'add_dll_directory'):
+        for dll_dir in existing_dirs:
+            try:
+                _DLL_DIRECTORY_HANDLES.append(os.add_dll_directory(dll_dir))
+            except OSError:
+                # Ignore directories that cannot be registered.
+                pass
+
+    # Keep PATH in sync as fallback for subprocesses/older loaders.
+    current_path = os.environ.get('PATH', '')
+    path_parts = [p for p in current_path.split(os.pathsep) if p]
+    for dll_dir in reversed(existing_dirs):
+        if dll_dir not in path_parts:
+            path_parts.insert(0, dll_dir)
+    os.environ['PATH'] = os.pathsep.join(path_parts)
 
 
 def setup_environment():
@@ -40,6 +98,9 @@ def setup_environment():
         
         # Set OpenCV to not use GUI threading issues
         os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = ''
+
+        # Ensure bundled runtime DLLs can be found on Windows.
+        _setup_windows_dll_search_paths(base_path)
         
     return base_path
 

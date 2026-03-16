@@ -60,8 +60,8 @@ class TestTracking:
     
     def test_bytetrack_import(self):
         """Test that ByteTrack can be imported"""
-        from tracking.bytetrack import ByteTrack
-        assert ByteTrack is not None
+        from tracking.bytetrack import ByteTracker
+        assert ByteTracker is not None
 
 
 class TestViolations:
@@ -78,10 +78,10 @@ class TestLaneDetection:
     
     def test_road_zone_import(self):
         """Test that road zone module can be imported"""
-        from lane_detection.road_zone import MultiRoadZoneOverlay
+        from lane_mapping.road_zone import MultiRoadZoneOverlay
         assert MultiRoadZoneOverlay is not None
     
     def test_bird_eye_view_import(self):
         """Test that bird eye view module can be imported"""
-        from lane_detection.bird_eye_view import BirdEyeView
-        assert BirdEyeView is not None
+        from lane_mapping.bird_eye_view import BirdEyeViewTransformer
+        assert BirdEyeViewTransformer is not None
