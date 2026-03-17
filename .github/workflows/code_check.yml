@@ -1,4 +1,4 @@
-name: Code Check
+name: CI Pipeline
 
 on:
   push:
@@ -11,7 +11,7 @@ env:
   PYTHON_VERSION: '3.10'
 
 jobs:
-  ci_build:
+  code_check:
     runs-on: windows-latest
 
     steps:

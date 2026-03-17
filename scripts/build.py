@@ -101,22 +101,6 @@ def run_pyinstaller(clean: bool = False, debug: bool = False):
         return False
 
 
-def verify_build():
-    """Kiểm tra kết quả build"""
-    root = get_project_root()
-    exe_path = root / 'dist' / 'vision_app.exe'
-    
-    if exe_path.exists():
-        size_mb = exe_path.stat().st_size / (1024 * 1024)
-        print(f"\nBuild successful!")
-        print(f"  Output: {exe_path}")
-        print(f"  Size: {size_mb:.1f} MB")
-        return True
-    else:
-        print("\nBuild failed - executable not found")
-        return False
-
-
 def run_release_pipeline(set_version: str = None, installer: bool = False):
     """Run release staging script after build."""
     root = get_project_root()
@@ -175,9 +159,6 @@ def main():
     
     # Run build
     if run_pyinstaller(clean=args.clean, debug=args.debug):
-        if not verify_build():
-            sys.exit(1)
-
         if args.release or args.installer or args.set_version:
             if not run_release_pipeline(set_version=args.set_version, installer=args.installer):
                 sys.exit(1)

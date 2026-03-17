@@ -1,4 +1,4 @@
-name: Build Executable
+name: CI Pipeline
 
 on:
   push:
@@ -10,7 +10,7 @@ env:
   PYTHON_VERSION: '3.10'
 
 jobs:
-  ci_build:
+  build_exe:
     runs-on: windows-latest
 
     steps:
