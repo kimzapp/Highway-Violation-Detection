@@ -477,9 +477,13 @@ class BirdEyeViewVisualizer:
     def get_vehicle_color(self, class_id: int, tracker_id: int = None) -> Tuple[int, int, int]:
         """Lấy màu cho xe dựa trên class hoặc tracker ID"""
         if tracker_id is not None:
-            # Tạo màu unique dựa trên tracker ID
-            np.random.seed(tracker_id * 10)
-            return tuple(np.random.randint(100, 255, 3).tolist())
+            # Tạo màu deterministic theo ID, không dùng global RNG mỗi frame
+            tid = int(tracker_id)
+            return (
+                100 + ((tid * 37) % 155),
+                100 + ((tid * 67) % 155),
+                100 + ((tid * 97) % 155),
+            )
         return self.vehicle_colors.get(class_id, self.default_color)
     
     def update_position_history(self, tracker_id: int, position: Tuple[int, int]):
@@ -586,10 +590,6 @@ class BirdEyeViewVisualizer:
         # Đếm số xe trong từng zone
         valid_count = 0
         invalid_count = 0
-        
-        # Xóa lịch sử của các xe không còn được track
-        valid_tracker_ids = [tid for tid in tracker_ids if tid is not None]
-        self.clean_old_tracks(valid_tracker_ids)
         
         # Vẽ từng xe lên BEV
         for i, (box, class_id, tracker_id, conf) in enumerate(zip(boxes, class_ids, tracker_ids, confidences)):
@@ -1695,8 +1695,12 @@ class IPMBirdEyeViewVisualizer:
     def get_vehicle_color(self, class_id: int, tracker_id: int = None) -> Tuple[int, int, int]:
         """Lấy màu cho xe"""
         if tracker_id is not None:
-            np.random.seed(tracker_id * 10)
-            return tuple(np.random.randint(120, 240, 3).tolist())
+            tid = int(tracker_id)
+            return (
+                120 + ((tid * 37) % 120),
+                120 + ((tid * 67) % 120),
+                120 + ((tid * 97) % 120),
+            )
         return self.vehicle_colors.get(class_id, self.default_color)
     
     def update_position_history(self, tracker_id: int, position: Tuple[int, int]):

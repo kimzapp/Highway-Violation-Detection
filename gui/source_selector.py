@@ -3,6 +3,8 @@ Source Selector Widget
 Widget cho phép người dùng chọn nguồn dữ liệu đầu vào
 """
 
+import os
+
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
 from enum import Enum
@@ -31,13 +33,17 @@ class SourceConfig:
     path: str = ""
     camera_id: int = 0
     rtsp_url: str = ""
+    output_format: str = "mp4"
+    output_path: str = ""
     
     def to_dict(self) -> Dict[str, Any]:
         return {
             'source_type': self.source_type.value,
             'path': self.path,
             'camera_id': self.camera_id,
-            'rtsp_url': self.rtsp_url
+            'rtsp_url': self.rtsp_url,
+            'output_format': self.output_format,
+            'output_path': self.output_path,
         }
 
 
@@ -57,6 +63,7 @@ class SourceSelector(QWidget):
         super().__init__(parent)
         self._setup_ui()
         self._connect_signals()
+        self._set_default_output_path()
         
     def _setup_ui(self):
         """Thiết lập giao diện"""
@@ -180,6 +187,46 @@ class SourceSelector(QWidget):
         self._video_info_label = QLabel("")
         self._video_info_label.setStyleSheet("color: #666666; font-style: italic;")
         layout.addWidget(self._video_info_label)
+
+        # Output format selection (step 1)
+        output_format_layout = QHBoxLayout()
+
+        output_format_label = QLabel("Định dạng output:")
+        output_format_label.setMinimumWidth(110)
+        output_format_layout.addWidget(output_format_label)
+
+        self._output_format_combo = QComboBox()
+        self._output_format_combo.setMinimumHeight(35)
+        self._output_format_combo.addItem("MP4 (.mp4)", "mp4")
+        self._output_format_combo.addItem("AVI (.avi)", "avi")
+        self._output_format_combo.addItem("MOV (.mov)", "mov")
+        self._output_format_combo.addItem("MKV (.mkv)", "mkv")
+        output_format_layout.addWidget(self._output_format_combo, 1)
+
+        format_hint = QLabel("Mặc định: mp4")
+        format_hint.setStyleSheet("color: #666666;")
+        output_format_layout.addWidget(format_hint)
+
+        layout.addLayout(output_format_layout)
+
+        # Output file path selection (step 1)
+        output_path_layout = QHBoxLayout()
+
+        output_path_label = QLabel("Lưu output:")
+        output_path_label.setMinimumWidth(110)
+        output_path_layout.addWidget(output_path_label)
+
+        self._output_path_edit = QLineEdit()
+        self._output_path_edit.setPlaceholderText("Chọn đường dẫn lưu video output")
+        self._output_path_edit.setMinimumHeight(35)
+        output_path_layout.addWidget(self._output_path_edit, 1)
+
+        self._browse_output_btn = QPushButton("Duyệt...")
+        self._browse_output_btn.setMinimumHeight(35)
+        self._browse_output_btn.setMinimumWidth(80)
+        output_path_layout.addWidget(self._browse_output_btn)
+
+        layout.addLayout(output_path_layout)
         
         parent_layout.addWidget(self._video_section)
         
@@ -295,6 +342,8 @@ class SourceSelector(QWidget):
         
         # Video file browse
         self._browse_video_btn.clicked.connect(self._browse_video_file)
+        self._browse_output_btn.clicked.connect(self._browse_output_file)
+        self._output_format_combo.currentIndexChanged.connect(self._on_output_format_changed)
         self._video_path_edit.textChanged.connect(self._validate_source)
         
         # Confirm button
@@ -333,6 +382,65 @@ class SourceSelector(QWidget):
         if file_path:
             self._video_path_edit.setText(file_path)
             self._update_video_info(file_path)
+
+            # Gợi ý output file theo tên input nếu đang dùng giá trị mặc định
+            current_output = self._output_path_edit.text().strip()
+            if not current_output or os.path.basename(current_output).lower().startswith("output"):
+                self._set_default_output_path(video_path=file_path)
+
+    def _browse_output_file(self):
+        """Mở dialog chọn đường dẫn lưu output ở bước 1."""
+        selected_ext = self._output_format_combo.currentData() or "mp4"
+        current_path = self._output_path_edit.text().strip()
+
+        default_path = current_path if current_path else self._build_default_output_path(ext=selected_ext)
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Chọn Đường Dẫn Output",
+            default_path,
+            "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*.*)"
+        )
+        if file_path:
+            self._output_path_edit.setText(file_path)
+
+    def _on_output_format_changed(self, _index: int):
+        """Đồng bộ extension của output path khi đổi định dạng."""
+        current_path = self._output_path_edit.text().strip()
+        selected_ext = self._output_format_combo.currentData() or "mp4"
+
+        if not current_path:
+            self._set_default_output_path()
+            return
+
+        root, _ = os.path.splitext(current_path)
+        if not root:
+            root = os.path.join(self._get_default_output_dir(), "output")
+        self._output_path_edit.setText(f"{root}.{selected_ext}")
+
+    def _get_project_root(self) -> str:
+        """Lấy đường dẫn thư mục gốc dự án từ vị trí file GUI."""
+        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def _get_default_output_dir(self) -> str:
+        """Lấy thư mục output mặc định của dự án và đảm bảo thư mục tồn tại."""
+        output_dir = os.path.join(self._get_project_root(), "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+        return output_dir
+
+    def _build_default_output_path(self, ext: str = "mp4", video_path: str = "") -> str:
+        """Tạo output path mặc định trong thư mục outputs của dự án."""
+        output_dir = self._get_default_output_dir()
+        if video_path:
+            base_name = os.path.splitext(os.path.basename(video_path))[0] or "output"
+            file_name = f"{base_name}_output.{ext}"
+        else:
+            file_name = f"output.{ext}"
+        return os.path.join(output_dir, file_name)
+
+    def _set_default_output_path(self, video_path: str = ""):
+        """Đặt output path mặc định theo thư mục outputs của dự án."""
+        ext = self._output_format_combo.currentData() or "mp4"
+        self._output_path_edit.setText(self._build_default_output_path(ext=ext, video_path=video_path))
             
     def _update_video_info(self, file_path: str):
         """Cập nhật thông tin video"""
@@ -395,26 +503,34 @@ class SourceSelector(QWidget):
             if video_path:
                 return SourceConfig(
                     source_type=SourceType.VIDEO,
-                    path=video_path
+                    path=video_path,
+                    output_format=self._output_format_combo.currentData() or "mp4",
+                    output_path=self._output_path_edit.text().strip(),
                 )
         elif self._camera_radio.isChecked():
             return SourceConfig(
                 source_type=SourceType.CAMERA,
-                camera_id=self._camera_combo.currentData()
+                camera_id=self._camera_combo.currentData(),
+                output_format="mp4",
+                output_path=self._build_default_output_path(ext="mp4"),
             )
         elif self._rtsp_radio.isChecked():
             rtsp_url = self._rtsp_url_edit.text().strip()
             if rtsp_url:
                 return SourceConfig(
                     source_type=SourceType.RTSP,
-                    rtsp_url=rtsp_url
+                    rtsp_url=rtsp_url,
+                    output_format="mp4",
+                    output_path=self._build_default_output_path(ext="mp4"),
                 )
         elif self._images_radio.isChecked():
             images_path = self._images_path_edit.text().strip()
             if images_path:
                 return SourceConfig(
                     source_type=SourceType.IMAGES,
-                    path=images_path
+                    path=images_path,
+                    output_format="mp4",
+                    output_path=self._build_default_output_path(ext="mp4"),
                 )
         return None
     

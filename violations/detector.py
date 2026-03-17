@@ -672,7 +672,8 @@ class ViolationVisualizer:
         frame: np.ndarray,
         detections: sv.Detections,
         current_violations: Dict[int, List[ViolationType]],
-        frame_number: int
+        frame_number: int,
+        copy_frame: bool = True,
     ) -> np.ndarray:
         """
         Vẽ thông tin vi phạm lên frame
@@ -687,7 +688,7 @@ class ViolationVisualizer:
             Frame với thông tin vi phạm
         """
         self._frame_count = frame_number
-        result = frame.copy()
+        result = frame.copy() if copy_frame else frame
         
         if detections is None or len(detections) == 0:
             return result

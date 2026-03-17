@@ -161,6 +161,7 @@ class ProcessingConfig:
     
     # Output settings
     output_path: str = "output.mp4"
+    output_format: str = "mp4"
     save_video: bool = True
     
     def to_dict(self) -> Dict[str, Any]:
@@ -182,6 +183,7 @@ class ProcessingConfig:
             'bev_method': self.bev_method,
             'camera_height': self.camera_height,
             'output_path': self.output_path,
+            'output_format': self.output_format,
             'save_video': self.save_video
         }
     
@@ -267,10 +269,6 @@ class ConfigPanel(QWidget):
         # Visualization tab
         viz_tab = self._create_visualization_tab()
         tab_widget.addTab(viz_tab, "👁️ Hiển thị")
-        
-        # Output tab
-        output_tab = self._create_output_tab()
-        tab_widget.addTab(output_tab, "💾 Output")
         
         scroll_layout.addWidget(tab_widget)
         scroll_area.setWidget(scroll_content)
@@ -643,38 +641,6 @@ class ConfigPanel(QWidget):
         
         return widget
         
-    def _create_output_tab(self) -> QWidget:
-        """Tạo tab cấu hình output"""
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setSpacing(15)
-        
-        # Output settings
-        output_group = QGroupBox("Cấu Hình Output")
-        output_layout = QGridLayout(output_group)
-        
-        self._save_video_check = QCheckBox("Lưu video output")
-        self._save_video_check.setChecked(True)
-        output_layout.addWidget(self._save_video_check, 0, 0, 1, 3)
-        
-        output_layout.addWidget(QLabel("Output path:"), 1, 0)
-        
-        self._output_path_edit = QLineEdit()
-        self._output_path_edit.setPlaceholderText("Đường dẫn lưu video output")
-        self._output_path_edit.setText("output.mp4")
-        self._output_path_edit.setMinimumHeight(35)
-        output_layout.addWidget(self._output_path_edit, 1, 1)
-        
-        self._browse_output_btn = QPushButton("Duyệt...")
-        self._browse_output_btn.setMinimumHeight(35)
-        output_layout.addWidget(self._browse_output_btn, 1, 2)
-        
-        layout.addWidget(output_group)
-        
-        layout.addStretch()
-        
-        return widget
-        
     def _connect_signals(self):
         """Kết nối các signals"""
         # Model
@@ -696,9 +662,6 @@ class ConfigPanel(QWidget):
         
         self._iou_slider.valueChanged.connect(lambda v: self._iou_spin.setValue(v / 100))
         self._iou_spin.valueChanged.connect(lambda v: self._iou_slider.setValue(int(v * 100)))
-        
-        # Output
-        self._browse_output_btn.clicked.connect(self._browse_output_file)
         
         # Buttons
         self._reset_btn.clicked.connect(self._reset_to_defaults)
@@ -859,17 +822,6 @@ class ConfigPanel(QWidget):
         for checkbox in self._class_checkboxes.values():
             checkbox.setChecked(False)
             
-    def _browse_output_file(self):
-        """Mở dialog chọn output file"""
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Chọn Đường Dẫn Output",
-            "output.mp4",
-            "Video Files (*.mp4 *.avi);;All Files (*.*)"
-        )
-        if file_path:
-            self._output_path_edit.setText(file_path)
-            
     def _reset_to_defaults(self):
         """Reset về giá trị mặc định"""
         reply = QMessageBox.question(
@@ -926,10 +878,6 @@ class ConfigPanel(QWidget):
         if bev_method_index >= 0:
             self._bev_method_combo.setCurrentIndex(bev_method_index)
             
-        # Output
-        self._save_video_check.setChecked(self._config.save_video)
-        self._output_path_edit.setText(self._config.output_path)
-        
     def _save_ui_to_config(self):
         """Lưu UI vào config"""
         self._config.model_path = self._model_path_edit.text().strip() or "yolov8n.pt"
@@ -957,8 +905,16 @@ class ConfigPanel(QWidget):
         self._config.bev_method = self._bev_method_combo.currentData() or "ipm"
         self._config.camera_height = self._camera_height_spin.value()
         
-        self._config.save_video = self._save_video_check.isChecked()
-        self._config.output_path = self._output_path_edit.text().strip() or "output.mp4"
+        self._config.save_video = bool(self._config.output_path)
+        self._config.output_format = self._config.output_format or "mp4"
+        output_path = self._config.output_path.strip() if self._config.output_path else f"output.{self._config.output_format}"
+        root, ext = os.path.splitext(output_path)
+        if not root:
+            root = "output"
+        current_ext = ext.lower().lstrip('.')
+        if current_ext != self._config.output_format:
+            output_path = f"{root}.{self._config.output_format}"
+        self._config.output_path = output_path
         
     def _on_confirm(self):
         """Xử lý khi nhấn xác nhận"""
@@ -991,3 +947,25 @@ class ConfigPanel(QWidget):
         """Đặt cấu hình"""
         self._config = config
         self._load_config_to_ui()
+
+    def set_output_preferences(self, output_format: str, source_path: str = "", output_path: str = ""):
+        """Đồng bộ output từ bước chọn video (không phụ thuộc UI bước 2)."""
+        if not output_format:
+            output_format = "mp4"
+        self._config.output_format = output_format.lower()
+
+        if output_path:
+            root, ext = os.path.splitext(output_path)
+            if not root:
+                root = "output"
+            current_ext = ext.lower().lstrip('.')
+            if current_ext != self._config.output_format:
+                output_path = f"{root}.{self._config.output_format}"
+            self._config.output_path = output_path
+            return
+
+        if source_path:
+            source_root = os.path.splitext(os.path.basename(source_path))[0] or "output"
+            self._config.output_path = f"{source_root}_output.{self._config.output_format}"
+        else:
+            self._config.output_path = f"output.{self._config.output_format}"
