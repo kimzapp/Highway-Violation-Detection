@@ -5,6 +5,7 @@ Cửa sổ chính của ứng dụng Highway Detection GUI
 
 import os
 import sys
+import time
 import cv2
 import numpy as np
 from typing import Optional, List
@@ -61,6 +62,8 @@ class ProcessingThread(QThread):
         self._model_handler = model_handler  # Pre-loaded model handler
         self._is_running = True
         self._processor = None
+        self._preview_max_fps = 12.0
+        self._preview_interval_s = 1.0 / self._preview_max_fps
         
     def run(self):
         """Chạy xử lý video"""
@@ -207,20 +210,34 @@ class ProcessingThread(QThread):
             print(f"Output will be saved to: {output_path}")
         
         frame_count = 0
+        benchmark_every = 120
+        timing_totals = {
+            "process_frame": 0.0,
+            "violations": 0.0,
+            "bev": 0.0,
+            "ui_emit": 0.0,
+            "write": 0.0,
+            "total": 0.0,
+        }
+        last_preview_emit_ts = 0.0
         print("Processing...")
         print(f"  Tracker visualization: boxes={processor.show_boxes}, labels={processor.show_labels}, traces={processor.show_traces}")
         print(f"  Class filter: {processor.classes if processor.classes else 'None (detect all)'}")
         
         try:
             while self._is_running:
+                loop_start = time.perf_counter()
                 ret, frame = cap.read()
                 if not ret:
                     break
                 
                 # Process frame
+                stage_start = time.perf_counter()
                 annotated_frame, tracked_detections = processor.process_frame(frame)
+                timing_totals["process_frame"] += time.perf_counter() - stage_start
                 
                 # Detect violations
+                stage_start = time.perf_counter()
                 if processor.violation_detector is not None and len(tracked_detections) > 0:
                     processor._current_violations = processor.violation_detector.update(
                         detections=tracked_detections,
@@ -233,8 +250,10 @@ class ProcessingThread(QThread):
                             frame=annotated_frame,
                             detections=tracked_detections,
                             current_violations=processor._current_violations,
-                            frame_number=frame_count
+                            frame_number=frame_count,
+                            copy_frame=False,
                         )
+                timing_totals["violations"] += time.perf_counter() - stage_start
                 
                 # Add frame info overlay with FPS
                 proc_fps = processor.fps_counter.avg_fps
@@ -243,6 +262,7 @@ class ProcessingThread(QThread):
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
                 
                 # Create Bird's Eye View if enabled
+                stage_start = time.perf_counter()
                 display_frame = annotated_frame
                 if processor.bev_visualizer is not None:
                     bev_frame = processor.bev_visualizer.draw(
@@ -256,28 +276,61 @@ class ProcessingThread(QThread):
                         bev_frame=bev_frame,
                         layout="horizontal"
                     )
+                timing_totals["bev"] += time.perf_counter() - stage_start
                 
-                # Emit frame to GUI (make a copy for thread safety)
-                self.frame_processed.emit(display_frame.copy())
-                self.progress_updated.emit(frame_count + 1, total_frames)
+                # Throttle preview updates so heavy UI conversion does not block processing throughput.
+                stage_start = time.perf_counter()
+                now = time.perf_counter()
+                if frame_count == 0 or (now - last_preview_emit_ts) >= self._preview_interval_s:
+                    self.frame_processed.emit(display_frame)
+                    last_preview_emit_ts = now
+
+                if frame_count % 2 == 0 or (frame_count + 1) >= total_frames:
+                    self.progress_updated.emit(frame_count + 1, total_frames)
+                timing_totals["ui_emit"] += time.perf_counter() - stage_start
                 
                 # Save frame
+                stage_start = time.perf_counter()
                 if writer:
                     writer.write(display_frame)
+                timing_totals["write"] += time.perf_counter() - stage_start
                 
                 frame_count += 1
                 
                 # Update FPS counter
                 processor.fps_counter.tick()
-                
-                # Small delay to prevent GUI freezing
-                QThread.msleep(1)
+
+                timing_totals["total"] += time.perf_counter() - loop_start
+
+                if frame_count % benchmark_every == 0:
+                    avg_total = timing_totals["total"] / frame_count * 1000.0
+                    avg_infer = timing_totals["process_frame"] / frame_count * 1000.0
+                    avg_viol = timing_totals["violations"] / frame_count * 1000.0
+                    avg_bev = timing_totals["bev"] / frame_count * 1000.0
+                    avg_ui = timing_totals["ui_emit"] / frame_count * 1000.0
+                    avg_write = timing_totals["write"] / frame_count * 1000.0
+                    print(
+                        "[Perf] "
+                        f"frames={frame_count} total={avg_total:.2f}ms "
+                        f"infer+track={avg_infer:.2f}ms violations={avg_viol:.2f}ms "
+                        f"bev={avg_bev:.2f}ms ui={avg_ui:.2f}ms write={avg_write:.2f}ms"
+                    )
                 
         finally:
             cap.release()
             if writer:
                 writer.release()
             print(f"Processed {frame_count} frames")
+            if frame_count > 0:
+                print(
+                    "[Perf] Final averages: "
+                    f"total={timing_totals['total'] / frame_count * 1000.0:.2f}ms, "
+                    f"infer+track={timing_totals['process_frame'] / frame_count * 1000.0:.2f}ms, "
+                    f"violations={timing_totals['violations'] / frame_count * 1000.0:.2f}ms, "
+                    f"bev={timing_totals['bev'] / frame_count * 1000.0:.2f}ms, "
+                    f"ui={timing_totals['ui_emit'] / frame_count * 1000.0:.2f}ms, "
+                    f"write={timing_totals['write'] / frame_count * 1000.0:.2f}ms"
+                )
             
     def _create_args(self):
         """Tạo object args từ config"""
@@ -810,7 +863,10 @@ class MainWindow(QMainWindow):
             new_h = int(h * scale)
             
             if new_w > 0 and new_h > 0:
-                scaled_frame = cv2.resize(rgb_frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+                if new_w == w and new_h == h:
+                    scaled_frame = rgb_frame
+                else:
+                    scaled_frame = cv2.resize(rgb_frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
                 
                 # Create QImage and QPixmap
                 # Note: .copy() is required because QImage doesn't copy data from numpy array
@@ -821,8 +877,6 @@ class MainWindow(QMainWindow):
                 pixmap = QPixmap.fromImage(q_image)
                 
                 self._video_display_label.setPixmap(pixmap)
-                # Force immediate repaint to ensure frame is displayed
-                self._video_display_label.repaint()
         except Exception as e:
             print(f"Error displaying frame: {e}")
             

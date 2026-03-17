@@ -270,10 +270,6 @@ class ConfigPanel(QWidget):
         viz_tab = self._create_visualization_tab()
         tab_widget.addTab(viz_tab, "👁️ Hiển thị")
         
-        # Output tab
-        output_tab = self._create_output_tab()
-        tab_widget.addTab(output_tab, "💾 Output")
-        
         scroll_layout.addWidget(tab_widget)
         scroll_area.setWidget(scroll_content)
         main_layout.addWidget(scroll_area, 1)
@@ -645,47 +641,6 @@ class ConfigPanel(QWidget):
         
         return widget
         
-    def _create_output_tab(self) -> QWidget:
-        """Tạo tab cấu hình output"""
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setSpacing(15)
-        
-        # Output settings
-        output_group = QGroupBox("Cấu Hình Output")
-        output_layout = QGridLayout(output_group)
-        
-        self._save_video_check = QCheckBox("Lưu video output")
-        self._save_video_check.setChecked(True)
-        output_layout.addWidget(self._save_video_check, 0, 0, 1, 3)
-        
-        output_layout.addWidget(QLabel("Output path:"), 1, 0)
-        
-        self._output_path_edit = QLineEdit()
-        self._output_path_edit.setPlaceholderText("Đường dẫn lưu video output")
-        self._output_path_edit.setText("output.mp4")
-        self._output_path_edit.setMinimumHeight(35)
-        output_layout.addWidget(self._output_path_edit, 1, 1)
-        
-        self._browse_output_btn = QPushButton("Duyệt...")
-        self._browse_output_btn.setMinimumHeight(35)
-        output_layout.addWidget(self._browse_output_btn, 1, 2)
-
-        output_layout.addWidget(QLabel("Định dạng:"), 2, 0)
-        self._output_format_combo = QComboBox()
-        self._output_format_combo.setMinimumHeight(35)
-        self._output_format_combo.addItem("MP4 (.mp4)", "mp4")
-        self._output_format_combo.addItem("AVI (.avi)", "avi")
-        self._output_format_combo.addItem("MOV (.mov)", "mov")
-        self._output_format_combo.addItem("MKV (.mkv)", "mkv")
-        output_layout.addWidget(self._output_format_combo, 2, 1, 1, 2)
-        
-        layout.addWidget(output_group)
-        
-        layout.addStretch()
-        
-        return widget
-        
     def _connect_signals(self):
         """Kết nối các signals"""
         # Model
@@ -707,11 +662,6 @@ class ConfigPanel(QWidget):
         
         self._iou_slider.valueChanged.connect(lambda v: self._iou_spin.setValue(v / 100))
         self._iou_spin.valueChanged.connect(lambda v: self._iou_slider.setValue(int(v * 100)))
-        
-        # Output
-        self._browse_output_btn.clicked.connect(self._browse_output_file)
-        self._output_format_combo.currentIndexChanged.connect(self._on_output_format_changed)
-        self._output_path_edit.editingFinished.connect(self._on_output_path_edited)
         
         # Buttons
         self._reset_btn.clicked.connect(self._reset_to_defaults)
@@ -872,59 +822,6 @@ class ConfigPanel(QWidget):
         for checkbox in self._class_checkboxes.values():
             checkbox.setChecked(False)
             
-    def _browse_output_file(self):
-        """Mở dialog chọn output file"""
-        selected_ext = self._output_format_combo.currentData() or "mp4"
-        default_name = f"output.{selected_ext}"
-
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Chọn Đường Dẫn Output",
-            default_name,
-            "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*.*)"
-        )
-        if file_path:
-            self._output_path_edit.setText(file_path)
-            self._sync_format_from_path(file_path)
-
-    def _on_output_format_changed(self, _index: int):
-        """Đồng bộ extension file khi người dùng đổi format."""
-        self._sync_output_path_extension()
-
-    def _on_output_path_edited(self):
-        """Tự nhận diện format theo extension khi người dùng sửa path."""
-        self._sync_format_from_path(self._output_path_edit.text().strip())
-
-    def _sync_output_path_extension(self):
-        """Đổi extension output path theo định dạng được chọn."""
-        selected_ext = self._output_format_combo.currentData() or "mp4"
-        current_path = self._output_path_edit.text().strip()
-
-        if not current_path:
-            self._output_path_edit.setText(f"output.{selected_ext}")
-            return
-
-        root, _ = os.path.splitext(current_path)
-        if not root:
-            root = "output"
-        self._output_path_edit.setText(f"{root}.{selected_ext}")
-
-    def _sync_format_from_path(self, path: str):
-        """Chọn format theo extension hiện tại nếu thuộc nhóm hỗ trợ."""
-        if not path:
-            return
-
-        _, ext = os.path.splitext(path)
-        ext = ext.lower().lstrip('.')
-        if not ext:
-            return
-
-        index = self._output_format_combo.findData(ext)
-        if index >= 0 and index != self._output_format_combo.currentIndex():
-            self._output_format_combo.blockSignals(True)
-            self._output_format_combo.setCurrentIndex(index)
-            self._output_format_combo.blockSignals(False)
-            
     def _reset_to_defaults(self):
         """Reset về giá trị mặc định"""
         reply = QMessageBox.question(
@@ -981,16 +878,6 @@ class ConfigPanel(QWidget):
         if bev_method_index >= 0:
             self._bev_method_combo.setCurrentIndex(bev_method_index)
             
-        # Output
-        self._save_video_check.setChecked(self._config.save_video)
-        self._output_path_edit.setText(self._config.output_path)
-        output_format_index = self._output_format_combo.findData(self._config.output_format)
-        if output_format_index < 0:
-            output_format_index = self._output_format_combo.findData("mp4")
-        if output_format_index >= 0:
-            self._output_format_combo.setCurrentIndex(output_format_index)
-        self._sync_format_from_path(self._output_path_edit.text().strip())
-        
     def _save_ui_to_config(self):
         """Lưu UI vào config"""
         self._config.model_path = self._model_path_edit.text().strip() or "yolov8n.pt"
@@ -1018,9 +905,9 @@ class ConfigPanel(QWidget):
         self._config.bev_method = self._bev_method_combo.currentData() or "ipm"
         self._config.camera_height = self._camera_height_spin.value()
         
-        self._config.save_video = self._save_video_check.isChecked()
-        self._config.output_format = self._output_format_combo.currentData() or "mp4"
-        output_path = self._output_path_edit.text().strip() or "output.mp4"
+        self._config.save_video = bool(self._config.output_path)
+        self._config.output_format = self._config.output_format or "mp4"
+        output_path = self._config.output_path.strip() if self._config.output_path else f"output.{self._config.output_format}"
         root, ext = os.path.splitext(output_path)
         if not root:
             root = "output"
@@ -1062,29 +949,23 @@ class ConfigPanel(QWidget):
         self._load_config_to_ui()
 
     def set_output_preferences(self, output_format: str, source_path: str = "", output_path: str = ""):
-        """Đồng bộ định dạng output được chọn từ bước chọn video."""
+        """Đồng bộ output từ bước chọn video (không phụ thuộc UI bước 2)."""
         if not output_format:
             output_format = "mp4"
-
-        output_format_index = self._output_format_combo.findData(output_format.lower())
-        if output_format_index < 0:
-            output_format_index = self._output_format_combo.findData("mp4")
-
-        if output_format_index >= 0:
-            self._output_format_combo.setCurrentIndex(output_format_index)
+        self._config.output_format = output_format.lower()
 
         if output_path:
-            self._output_path_edit.setText(output_path)
-            self._sync_output_path_extension()
+            root, ext = os.path.splitext(output_path)
+            if not root:
+                root = "output"
+            current_ext = ext.lower().lstrip('.')
+            if current_ext != self._config.output_format:
+                output_path = f"{root}.{self._config.output_format}"
+            self._config.output_path = output_path
             return
 
-        # Nếu đang dùng tên mặc định, tạo output path theo tên video để dễ nhận biết.
-        current_path = self._output_path_edit.text().strip()
-        if (not current_path) or current_path.lower().startswith("output."):
-            if source_path:
-                source_root = os.path.splitext(os.path.basename(source_path))[0] or "output"
-                self._output_path_edit.setText(f"{source_root}_output.{self._output_format_combo.currentData()}")
-            else:
-                self._output_path_edit.setText(f"output.{self._output_format_combo.currentData()}")
+        if source_path:
+            source_root = os.path.splitext(os.path.basename(source_path))[0] or "output"
+            self._config.output_path = f"{source_root}_output.{self._config.output_format}"
         else:
-            self._sync_output_path_extension()
+            self._config.output_path = f"output.{self._config.output_format}"

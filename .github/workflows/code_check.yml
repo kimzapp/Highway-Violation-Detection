@@ -1,4 +1,4 @@
-name: <GUI> Code Check
+name: <DEV> Code Check
 
 on:
   push:

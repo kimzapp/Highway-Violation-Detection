@@ -283,7 +283,7 @@ class VideoProcessor:
             scene=frame,
             detections=detections,
             labels=None,
-            copy_scene=True  # Cần copy vì frame gốc được sử dụng lại
+            copy_scene=False  # In-place để giảm memory copy mỗi frame
         )
         
         # Draw road zone overlay if defined
