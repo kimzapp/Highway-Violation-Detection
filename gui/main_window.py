@@ -3,6 +3,7 @@ Main Window
 Cửa sổ chính của ứng dụng Highway Detection GUI
 """
 
+import os
 import sys
 import cv2
 import numpy as np
@@ -188,18 +189,21 @@ class ProcessingThread(QThread):
         
         writer = None
         if output_path:
-            import platform
             ext = output_path.lower().split('.')[-1]
-            
-            if platform.system() == 'Windows':
+
+            # Match codec to selected container while keeping the chosen extension.
+            if ext == 'avi':
                 fourcc = cv2.VideoWriter_fourcc(*'XVID')
-                if ext == 'mp4':
-                    output_path = output_path[:-4] + '.avi'
-                    print(f"Note: Changed output format to .avi for better compatibility")
             else:
-                fourcc = cv2.VideoWriter_fourcc(*'mp4v') if ext == 'mp4' else cv2.VideoWriter_fourcc(*'XVID')
-            
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+
             writer = cv2.VideoWriter(output_path, fourcc, fps, (output_width, output_height))
+
+            if not writer.isOpened() and ext != 'avi':
+                # Fallback codec for systems where mp4v cannot be opened.
+                fourcc = cv2.VideoWriter_fourcc(*'XVID')
+                writer = cv2.VideoWriter(output_path, fourcc, fps, (output_width, output_height))
+
             print(f"Output will be saved to: {output_path}")
         
         frame_count = 0
@@ -345,6 +349,8 @@ class MainWindow(QMainWindow):
         self._app_config = AppConfig()
         self._current_state = AppState.SOURCE_SELECTION
         self._processing_thread: Optional[ProcessingThread] = None
+        self._logo_original_pixmap: Optional[QPixmap] = None
+        self._logo_label: Optional[QLabel] = None
         
         self._setup_ui()
         self._connect_signals()
@@ -404,19 +410,42 @@ class MainWindow(QMainWindow):
         header.setStyleSheet("""
             QFrame {
                 background-color: #2196F3;
-                padding: 10px;
+                padding: 12px;
             }
         """)
-        header.setFixedHeight(60)
+        header.setFixedHeight(90)
         
         layout = QHBoxLayout(header)
         
-        # Logo/Title
-        title = QLabel("🚗 Highway Detection System")
+        # Logo
+        self._logo_label = QLabel()
+        self._logo_label.setFixedSize(180, 64)
+        self._logo_label.setAlignment(Qt.AlignCenter)
+        self._logo_label.setStyleSheet("""
+            QLabel {
+                background-color: rgba(255, 255, 255, 0.95);
+                border: 1px solid rgba(255, 255, 255, 0.8);
+                border-radius: 10px;
+                padding: 4px;
+            }
+        """)
+        layout.addWidget(self._logo_label)
+
+        logo_path = self._resolve_logo_path()
+        if logo_path:
+            pixmap = QPixmap(logo_path)
+            if not pixmap.isNull():
+                self._logo_original_pixmap = pixmap
+                self._update_logo_pixmap()
+
+        layout.addSpacing(14)
+
+        # Title
+        title = QLabel("Highway Detection System")
         title.setStyleSheet("""
             QLabel {
                 color: white;
-                font-size: 18px;
+                font-size: 20px;
                 font-weight: bold;
             }
         """)
@@ -430,6 +459,42 @@ class MainWindow(QMainWindow):
         layout.addWidget(version)
         
         return header
+
+    def _resolve_logo_path(self) -> Optional[str]:
+        """Tìm đường dẫn logo phù hợp cho cả dev mode và frozen mode."""
+        candidates = []
+
+        if getattr(sys, 'frozen', False):
+            exe_dir = os.path.dirname(sys.executable)
+            candidates.append(os.path.join(exe_dir, 'assets', 'logo.png'))
+
+            meipass = getattr(sys, '_MEIPASS', None)
+            if meipass:
+                candidates.append(os.path.join(meipass, 'assets', 'logo.png'))
+
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        candidates.append(os.path.join(project_root, 'assets', 'logo.png'))
+
+        for path in candidates:
+            if os.path.isfile(path):
+                return path
+        return None
+
+    def _update_logo_pixmap(self):
+        """Scale logo theo kích thước khung hiển thị, luôn giữ tỉ lệ."""
+        if not self._logo_label or not self._logo_original_pixmap:
+            return
+
+        target_size = self._logo_label.size()
+        if target_size.width() <= 0 or target_size.height() <= 0:
+            return
+
+        scaled = self._logo_original_pixmap.scaled(
+            target_size,
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation
+        )
+        self._logo_label.setPixmap(scaled)
         
     def _create_progress_indicator(self) -> QWidget:
         """Tạo progress indicator hiển thị các bước"""
@@ -635,6 +700,11 @@ class MainWindow(QMainWindow):
     def _on_source_selected(self, source_config: SourceConfig):
         """Xử lý khi nguồn được chọn"""
         self._app_config.source_config = source_config
+        self._config_panel.set_output_preferences(
+            output_format=source_config.output_format,
+            source_path=source_config.path,
+            output_path=source_config.output_path,
+        )
         self._status_bar.showMessage(f"Đã chọn: {source_config.path}")
         
         # Move to config
@@ -805,6 +875,11 @@ class MainWindow(QMainWindow):
                 event.ignore()
         else:
             event.accept()
+
+    def resizeEvent(self, event):
+        """Đảm bảo logo vẫn nét và vừa vặn khi thay đổi kích thước cửa sổ."""
+        super().resizeEvent(event)
+        self._update_logo_pixmap()
 
 
 def run_gui():
