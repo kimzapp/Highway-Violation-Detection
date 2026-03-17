@@ -1,10 +1,11 @@
-name: <DEV> Code Check
+name: <GUI> Code Check
 
 on:
   push:
     branches:
       - master
       - dev
+      - gui
   workflow_dispatch:
 
 env:
