@@ -1,4 +1,4 @@
-name: Code Check
+name: \[DEV\] Code Check
 
 on:
   push:
