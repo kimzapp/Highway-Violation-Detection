@@ -605,6 +605,7 @@ class BirdEyeViewVisualizer:
         class_names: Optional[dict] = None,
         show_ids: bool = True,
         show_labels: bool = True,
+        current_violations: Optional[dict] = None,
         show_zone_stats: bool = True,
     ) -> np.ndarray:
         """
@@ -1886,6 +1887,7 @@ class IPMBirdEyeViewVisualizer:
         class_names: Optional[dict] = None,
         show_ids: bool = True,
         show_labels: bool = True,  # Backwards compatibility with BirdEyeViewVisualizer
+        current_violations: Optional[dict] = None,
         show_trails: bool = True,
         show_speed: bool = False,
         show_zone_stats: bool = True,
