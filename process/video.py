@@ -190,9 +190,26 @@ class VideoProcessor:
         self.device = args.device
         self.conf_threshold = args.conf_thres
         self.iou_threshold = args.iou_thres
+        self.track_activation_threshold = float(
+            getattr(
+                args,
+                'track_activation_threshold',
+                getattr(args, 'track_activation_thres', max(0.4, self.conf_threshold + 0.15))
+            )
+        )
+        self.track_matching_threshold = float(
+            getattr(
+                args,
+                'track_matching_threshold',
+                getattr(args, 'track_match_thres', max(0.7, self.iou_threshold + 0.2))
+            )
+        )
         self.max_age = args.max_age
         self.img_size = args.img_size
         self.classes = args.classes
+
+        self.track_activation_threshold = float(np.clip(self.track_activation_threshold, 0.05, 0.95))
+        self.track_matching_threshold = float(np.clip(self.track_matching_threshold, 0.1, 0.95))
         
         self.show_boxes = args.show_boxes
         self.show_labels = args.show_labels
@@ -237,11 +254,21 @@ class VideoProcessor:
         """Khởi tạo tracker với fps thực tế"""
         # Reset FPS counter for new video
         self.fps_counter.reset()
+
+        recommended_min_age = self.skip_frames + 2
+        if self.max_age < recommended_min_age:
+            print(
+                f"Warning: max_age={self.max_age} thấp hơn mức khuyến nghị "
+                f"{recommended_min_age} khi skip_frames={self.skip_frames}."
+            )
+
+        if fps < 15 or fps > 120:
+            print(f"Warning: FPS={fps} bất thường, motion model có thể kém ổn định.")
         
         self.tracker = ByteTracker(
-            track_activation_threshold=self.conf_threshold,
+            track_activation_threshold=self.track_activation_threshold,
             lost_track_buffer=self.max_age,
-            minimum_matching_threshold=self.iou_threshold,
+            minimum_matching_threshold=self.track_matching_threshold,
             frame_rate=fps,
             box_viz=self.show_boxes,
             label_viz=self.show_labels,
@@ -569,7 +596,8 @@ class VideoProcessor:
         # Get video properties
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
+        raw_fps = cap.get(cv2.CAP_PROP_FPS)
+        fps = int(raw_fps) if raw_fps and raw_fps > 0 else 30
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
         # Initialize tracker với fps thực tế
@@ -776,6 +804,7 @@ class VideoProcessor:
         inferred_frame_count = 0
         stopped_by_user = False
         cached_detections = sv.Detections.empty()
+        last_inference_frame = -2
         
         if show_progress:
             print("Processing... Press 'q' to quit")
@@ -795,11 +824,17 @@ class VideoProcessor:
                 if should_process_frame:
                     inferred_frame_count += 1
                     cached_detections = self.infer_detections(frame)
+                    last_inference_frame = frame_count
 
-                # Always update tracker. On skipped frames it receives cached detections.
+                if not should_process_frame and (frame_count - last_inference_frame) > 1:
+                    detections_for_tracking = sv.Detections.empty()
+                else:
+                    detections_for_tracking = cached_detections
+
+                # Keep one bridge frame with cached detections, then switch to prediction-only.
                 annotated_frame, tracked_detections = self.track_with_detections(
                     frame,
-                    cached_detections,
+                    detections_for_tracking,
                 )
 
                 if self.violation_detector is not None and len(tracked_detections) > 0:

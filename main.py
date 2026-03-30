@@ -22,7 +22,11 @@ def parse_args():
     
     # Tracker options
     parser.add_argument("--conf-thres", type=float, default=0.25, help="Confidence threshold for detections")
-    parser.add_argument("--iou-thres", type=float, default=0.5, help="IoU threshold for tracking")
+    parser.add_argument("--iou-thres", type=float, default=0.5, help="IoU threshold for detection NMS")
+    parser.add_argument("--track-activation-thres", type=float, default=0.4,
+                        help="Confidence threshold to activate new tracks")
+    parser.add_argument("--track-match-thres", type=float, default=0.7,
+                        help="Minimum IoU threshold to match detections to existing tracks")
     parser.add_argument("--max-age", type=int, default=90, help="Maximum frames to keep track without detections")
     parser.add_argument("--classes", nargs="+", type=int, default=None, help="Class IDs to track (e.g., 2 5 7)")
     

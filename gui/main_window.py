@@ -116,7 +116,8 @@ class ProcessingThread(QThread):
         # Get video properties
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
+        raw_fps = cap.get(cv2.CAP_PROP_FPS)
+        fps = int(raw_fps) if raw_fps and raw_fps > 0 else 30
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
         # Initialize tracker
@@ -240,7 +241,9 @@ class ProcessingThread(QThread):
             "write": 0.0,
             "total": 0.0,
         }
-        cached_detections = None
+        from supervision import Detections
+        cached_detections = Detections.empty()
+        last_inference_frame = -2
         last_preview_emit_ts = 0.0
         print("Processing...")
         print(f"  Tracker visualization: boxes={processor.show_boxes}, labels={processor.show_labels}, traces={processor.show_traces}")
@@ -264,15 +267,18 @@ class ProcessingThread(QThread):
                     infer_start = time.perf_counter()
                     cached_detections = processor.infer_detections(frame)
                     timing_totals["inference"] += time.perf_counter() - infer_start
+
+                    last_inference_frame = frame_count
+
+                if not should_process_frame and (frame_count - last_inference_frame) > 1:
+                    detections_for_tracking = Detections.empty()
                 else:
-                    if cached_detections is None:
-                        from supervision import Detections
-                        cached_detections = Detections.empty()
+                    detections_for_tracking = cached_detections
 
                 track_start = time.perf_counter()
                 annotated_frame, tracked_detections = processor.track_with_detections(
                     frame,
-                    cached_detections,
+                    detections_for_tracking,
                 )
                 timing_totals["tracking"] += time.perf_counter() - track_start
 
@@ -407,6 +413,8 @@ class ProcessingThread(QThread):
         args.classes = pc.classes if pc.classes else None
         
         args.max_age = pc.max_age
+        args.track_activation_threshold = pc.track_activation_threshold
+        args.track_matching_threshold = pc.track_matching_threshold
         args.trace_length = pc.trace_length
         args.skip_frames = pc.skip_frames
         args.min_violation_frames = pc.min_violation_frames
