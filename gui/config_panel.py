@@ -156,9 +156,9 @@ class ProcessingConfig:
     # Tracker settings  
     max_age: int = 90
     track_activation_threshold: float = 0.4
-    track_matching_threshold: float = 0.7
+    track_matching_threshold: float = 0.8
     trace_length: int = 25
-    skip_frames: int = 1
+    skip_frames: int = 2
     render_hold_frames: int = 2
     violation_hold_frames: int = 2
     min_violation_frames: int = 10
