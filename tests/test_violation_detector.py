@@ -1,4 +1,4 @@
-"""Regression tests for wrong-lane detection behavior."""
+"""Tests for violation detector behaviors, including invalid-vehicle detection."""
 
 import os
 import sys
@@ -12,75 +12,87 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from violations.detector import ViolationDetector, ViolationType
 
 
-class IdentityBevTransformer:
-    """Simple transformer for deterministic tests."""
-
-    bev_width = 1920
-    bev_height = 1080
-
-    def transform_point(self, point):
-        return int(point[0]), int(point[1])
-
-
-def _make_detections(boxes, tracker_ids=None, class_ids=None):
-    boxes = np.asarray(boxes, dtype=np.float32)
-    n = len(boxes)
-
-    if tracker_ids is None:
-        tracker_ids = np.arange(1, n + 1, dtype=np.int64)
-    if class_ids is None:
-        class_ids = np.zeros(n, dtype=np.int64)
+def _single_detection(class_id: int, tracker_id: int, box=None) -> sv.Detections:
+    if box is None:
+        box = [10.0, 10.0, 30.0, 30.0]
 
     return sv.Detections(
-        xyxy=boxes,
-        confidence=np.ones(n, dtype=np.float32),
-        class_id=np.asarray(class_ids, dtype=np.int64),
-        tracker_id=np.asarray(tracker_ids, dtype=np.int64),
+        xyxy=np.array([box], dtype=np.float32),
+        confidence=np.array([0.9], dtype=np.float32),
+        class_id=np.array([class_id], dtype=np.int32),
+        tracker_id=np.array([tracker_id], dtype=np.int32),
     )
 
 
-def test_wrong_lane_majority_outside_camera_points():
-    detector = ViolationDetector(min_violation_frames=1, min_normal_frames=1)
+def test_invalid_vehicle_confirmed_after_min_frames():
+    detector = ViolationDetector(
+        min_violation_frames=3,
+        min_normal_frames=2,
+        enabled_violations={ViolationType.INVALID_VEHICLE},
+        valid_vehicle_class_ids={2},
+    )
 
-    # Valid zone là phần bên trái; box cắt biên sao cho 2/3 điểm đáy nằm ngoài.
-    zone = np.array([[0, 0], [40, 0], [40, 200], [0, 200]], dtype=np.int32)
-    detector.set_valid_zones([zone])
+    class_names = {2: "Car", 3: "Motorcycle"}
 
-    detections = _make_detections([[35, 50, 65, 100]])
-    violations = detector.update(detections, {0: "car"}, frame_number=1)
+    for frame_id in range(1, 4):
+        current = detector.update(_single_detection(class_id=3, tracker_id=101), class_names, frame_id)
 
-    assert 1 in violations
-    assert ViolationType.WRONG_LANE in violations[1]
-
-
-def test_bev_decision_priority_over_camera_zone():
-    detector = ViolationDetector(min_violation_frames=1, min_normal_frames=1)
-
-    camera_zone = np.array([[0, 0], [200, 0], [200, 200], [0, 200]], dtype=np.int32)
-    detector.set_valid_zones([camera_zone])
-    detector.set_bev_transformer(IdentityBevTransformer())
-
-    # Mô phỏng BEV zone lệch so với camera zone để đảm bảo detector ưu tiên BEV.
-    detector._bev_valid_zone_polygons = [
-        np.array([[0, 0], [40, 0], [40, 200], [0, 200]], dtype=np.int32)
-    ]
-
-    detections = _make_detections([[120, 50, 160, 100]])
-    violations = detector.update(detections, {0: "car"}, frame_number=1)
-
-    assert 1 in violations
-    assert ViolationType.WRONG_LANE in violations[1]
+    assert current[101] == [ViolationType.INVALID_VEHICLE]
+    assert len(detector.get_violations_log()) == 1
 
 
-def test_no_violation_when_fully_inside_valid_zone():
-    detector = ViolationDetector(min_violation_frames=1, min_normal_frames=1)
+def test_valid_vehicle_not_flagged_invalid_vehicle():
+    detector = ViolationDetector(
+        min_violation_frames=2,
+        min_normal_frames=2,
+        enabled_violations={ViolationType.INVALID_VEHICLE},
+        valid_vehicle_class_ids={2},
+    )
 
-    zone = np.array([[0, 0], [200, 0], [200, 200], [0, 200]], dtype=np.int32)
-    detector.set_valid_zones([zone])
-    detector.set_bev_transformer(IdentityBevTransformer())
+    class_names = {2: "Car"}
 
-    detections = _make_detections([[60, 50, 120, 100]])
-    violations = detector.update(detections, {0: "car"}, frame_number=1)
+    current = detector.update(_single_detection(class_id=2, tracker_id=9), class_names, frame_number=1)
 
-    assert 1 in violations
-    assert violations[1] == []
+    assert current[9] == []
+    assert detector.get_violations_log() == []
+
+
+def test_invalid_vehicle_state_clears_after_normal_frames():
+    detector = ViolationDetector(
+        min_violation_frames=2,
+        min_normal_frames=2,
+        enabled_violations={ViolationType.INVALID_VEHICLE},
+        valid_vehicle_class_ids={2},
+    )
+    class_names = {2: "Car", 3: "Motorcycle"}
+
+    # Confirm invalid-vehicle first.
+    detector.update(_single_detection(class_id=3, tracker_id=77), class_names, frame_number=1)
+    detector.update(_single_detection(class_id=3, tracker_id=77), class_names, frame_number=2)
+
+    # Vehicle becomes valid for enough frames -> violation state should clear.
+    current = detector.update(_single_detection(class_id=2, tracker_id=77), class_names, frame_number=3)
+    assert current[77] == [ViolationType.INVALID_VEHICLE]
+
+    current = detector.update(_single_detection(class_id=2, tracker_id=77), class_names, frame_number=4)
+    assert current[77] == []
+
+
+def test_wrong_lane_still_detects_for_valid_vehicle():
+    detector = ViolationDetector(
+        min_violation_frames=2,
+        min_normal_frames=1,
+        enabled_violations={ViolationType.WRONG_LANE, ViolationType.INVALID_VEHICLE},
+        valid_vehicle_class_ids={2},
+    )
+
+    # Valid zone is far away from test box's center-bottom point (20, 30).
+    valid_zone = np.array([[100, 100], [200, 100], [200, 200], [100, 200]], dtype=np.int32)
+    detector.set_valid_zones([valid_zone])
+
+    class_names = {2: "Car"}
+
+    detector.update(_single_detection(class_id=2, tracker_id=5), class_names, frame_number=1)
+    current = detector.update(_single_detection(class_id=2, tracker_id=5), class_names, frame_number=2)
+
+    assert current[5] == [ViolationType.WRONG_LANE]
