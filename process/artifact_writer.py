@@ -102,7 +102,7 @@ def _draw_primary_target(
     frame: np.ndarray,
     detections: List[Dict[str, Any]],
     tracker_id: int,
-) -> bool:
+) -> Optional[Dict[str, Any]]:
     target = None
     for row in detections:
         if int(row.get("tracker_id", -1)) == int(tracker_id):
@@ -110,8 +110,7 @@ def _draw_primary_target(
             break
 
     if target is None:
-        cv2.putText(frame, "target_lost", (16, frame.shape[0] - 16), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
-        return False
+        return None
 
     x1, y1, x2, y2 = target["bbox"]
     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
@@ -119,7 +118,7 @@ def _draw_primary_target(
     label = f"#{target['tracker_id']} {target['class_name']} {target['confidence']:.2f}"
     cv2.rectangle(frame, (x1, max(0, y1 - 28)), (x1 + 260, y1), (0, 0, 255), -1)
     cv2.putText(frame, label, (x1 + 4, max(16, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
-    return True
+    return target
 
 
 def _draw_metadata_overlay(
@@ -241,7 +240,15 @@ def _artifact_worker_main(
 
         out_frame = frame.copy()
         _draw_valid_zones(out_frame, safe_zone_polygons)
-        _draw_primary_target(out_frame, detections, int(event["tracker_id"]))
+        current_target = _draw_primary_target(out_frame, detections, int(event["tracker_id"]))
+        if current_target is not None:
+            event["last_target_detection"] = dict(current_target)
+        elif event.get("last_target_detection") is not None:
+            _draw_primary_target(
+                out_frame,
+                [event["last_target_detection"]],
+                int(event["tracker_id"]),
+            )
         _draw_metadata_overlay(
             out_frame,
             violation_id=str(event["violation_id"]),
@@ -291,6 +298,7 @@ def _artifact_worker_main(
                     "writer": None,
                     "clip_path": None,
                     "last_written_frame": -1,
+                    "last_target_detection": None,
                     "fps": float(command.get("fps") or fps),
                 }
 
