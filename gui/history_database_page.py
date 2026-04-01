@@ -235,7 +235,12 @@ class HistoryDatabasePage(QWidget):
             self._status_label.setText("Không có video phù hợp.")
             return
 
+        # Force sync detail panel even when Qt does not emit selection-changed
+        # for a re-selected row that stays the same.
+        self._video_table.blockSignals(True)
         self._video_table.selectRow(selected_row)
+        self._video_table.blockSignals(False)
+        self._on_video_selection_changed()
         self._status_label.setText(f"Đã tải {len(self._videos)} video từ database.")
 
     def _on_video_selection_changed(self):
