@@ -158,11 +158,41 @@ def _draw_metadata_overlay(
         y += 24
 
 
-def _artifact_worker_main(command_queue, status_queue, *, artifact_dir: str, fps: float, max_buffer_frames: int):
+def _draw_valid_zones(frame: np.ndarray, valid_zone_polygons: List[List[List[int]]]):
+    if not valid_zone_polygons:
+        return
+
+    overlay = frame.copy()
+    for points in valid_zone_polygons:
+        polygon = np.array(points, dtype=np.int32)
+        if polygon.shape[0] < 3:
+            continue
+
+        cv2.fillPoly(overlay, [polygon], (30, 120, 30))
+        cv2.polylines(frame, [polygon], True, (0, 255, 0), 2)
+
+        anchor_x = int(np.min(polygon[:, 0]))
+        anchor_y = int(np.min(polygon[:, 1]))
+        label_pos = (max(0, anchor_x), max(18, anchor_y - 6))
+        cv2.putText(frame, "VALID ZONE", label_pos, cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+    cv2.addWeighted(overlay, 0.25, frame, 0.75, 0, frame)
+
+
+def _artifact_worker_main(
+    command_queue,
+    status_queue,
+    *,
+    artifact_dir: str,
+    fps: float,
+    max_buffer_frames: int,
+    valid_zone_polygons: Optional[List[List[List[int]]]],
+):
     os.makedirs(artifact_dir, exist_ok=True)
     frame_buffer: deque = deque(maxlen=max_buffer_frames)
     events: Dict[str, Dict[str, Any]] = {}
     completed_paths: Dict[str, Optional[str]] = {}
+    safe_zone_polygons = list(valid_zone_polygons or [])
 
     status_queue.put({"state": "ready"})
 
@@ -210,6 +240,7 @@ def _artifact_worker_main(command_queue, status_queue, *, artifact_dir: str, fps
             return
 
         out_frame = frame.copy()
+        _draw_valid_zones(out_frame, safe_zone_polygons)
         _draw_primary_target(out_frame, detections, int(event["tracker_id"]))
         _draw_metadata_overlay(
             out_frame,
@@ -300,6 +331,7 @@ class AsyncViolationArtifactWriter:
         video_path: str,
         fps: float,
         artifact_root: Optional[str] = None,
+        valid_zone_polygons: Optional[List[Any]] = None,
         max_queue_size: int = 180,
         max_buffer_frames: int = 320,
     ):
@@ -309,6 +341,7 @@ class AsyncViolationArtifactWriter:
         self.artifact_dir = os.path.join(self.artifact_root, self.video_key)
         self.fps = float(fps)
         self.max_buffer_frames = max(60, int(max_buffer_frames))
+        self.valid_zone_polygons = self._normalize_zone_polygons(valid_zone_polygons)
 
         self._ctx = mp.get_context("spawn")
         self._command_queue = self._ctx.Queue(maxsize=max_queue_size)
@@ -320,6 +353,7 @@ class AsyncViolationArtifactWriter:
                 "artifact_dir": self.artifact_dir,
                 "fps": self.fps,
                 "max_buffer_frames": self.max_buffer_frames,
+                "valid_zone_polygons": self.valid_zone_polygons,
             },
             name="AsyncViolationArtifactWriter",
             daemon=True,
@@ -329,6 +363,20 @@ class AsyncViolationArtifactWriter:
         self._closed = False
         self._error: Optional[str] = None
         self._dropped_messages = 0
+
+    @staticmethod
+    def _normalize_zone_polygons(valid_zone_polygons: Optional[List[Any]]) -> List[List[List[int]]]:
+        if not valid_zone_polygons:
+            return []
+
+        normalized: List[List[List[int]]] = []
+        for polygon in valid_zone_polygons:
+            points = np.asarray(polygon, dtype=np.int32).reshape(-1, 2)
+            if points.shape[0] < 3:
+                continue
+            normalized.append(points.tolist())
+
+        return normalized
 
     @property
     def dropped_messages(self) -> int:

@@ -987,6 +987,7 @@ class VideoProcessor:
             video_path=video_path,
             fps=float(fps),
             artifact_root=self.artifact_root_dir,
+            valid_zone_polygons=zone_polygons,
         )
         artifact_writer.start()
         

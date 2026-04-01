@@ -278,6 +278,7 @@ class ProcessingThread(QThread):
             video_path=video_path,
             fps=float(fps),
             artifact_root=processor.artifact_root_dir,
+            valid_zone_polygons=zone_polygons,
         )
         artifact_writer.start()
         benchmark_every = 120
